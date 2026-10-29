@@ -1,0 +1,25 @@
+
+# Dependencies
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+
+# Environment variables - do not upload secrets
+.env
+.env.*
+!.env.example
+backend/.env
+frontend/.env
+
+# Build output
+dist/
+dist-ssr/
+coverage/
+
+# Local files
+*.local
+.DS_Store
+
+# Local SQLite database
+backend/prisma/dev.db
+backend/prisma/dev.db-journal

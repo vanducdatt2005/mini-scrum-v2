@@ -1,0 +1,223 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String          @id @default(cuid())
+  email           String          @unique
+  password        String
+  fullName        String?
+  avatar          String?
+  role            String          @default("MEMBER")
+  createdAt       DateTime        @default(now())
+  projects        ProjectMember[]
+  assignedStories UserStory[]          @relation("AssignedStories")
+  assignedTasks   Task[]               @relation("AssignedTasks")
+  standups        DailyStandup[]
+  comments        Comment[]
+  attachments     Attachment[]
+  notificationsReceived Notification[] @relation("ReceivedNotifications")
+  notificationsSent     Notification[] @relation("SentNotifications")
+  contributions   MemberContribution[] // Đóng góp trong các Sprint
+}
+
+model Project {
+  id          String          @id @default(cuid())
+  name        String
+  description String?
+  goal        String?
+  createdAt   DateTime        @default(now())
+  members     ProjectMember[]
+  userStories UserStory[]
+  sprints     Sprint[]
+  standups    DailyStandup[]
+}
+
+model ProjectMember {
+  id        String  @id @default(cuid())
+  userId    String
+  projectId String
+  role      String
+  status    String  @default("ACCEPTED")
+  project   Project @relation(fields: [projectId], references: [id])
+  user      User    @relation(fields: [userId], references: [id])
+
+  @@unique([userId, projectId])
+}
+
+model Sprint {
+  id        String      @id @default(cuid())
+  name      String
+  goal      String?
+  startDate DateTime?
+  endDate   DateTime?
+  status    String      @default("PLANNED") // PLANNED, ACTIVE, COMPLETED
+  projectId String
+  project   Project        @relation(fields: [projectId], references: [id])
+  stories   UserStory[]
+  createdAt DateTime       @default(now())
+  summary   SprintSummary? // Kết quả tổng kết Sprint
+}
+
+model UserStory {
+  id           String  @id @default(cuid())
+  title        String
+  description  String?
+  storyPoints  Int?
+  status       String  @default("TODO")
+  priority     String  @default("MEDIUM")
+  tags         String  @default("[]")
+  projectId    String
+  assigneeId   String?
+  sprintId     String?
+  backlogOrder Int     @default(0)
+  assignee     User?   @relation("AssignedStories", fields: [assigneeId], references: [id])
+  project      Project @relation(fields: [projectId], references: [id])
+  sprint       Sprint? @relation(fields: [sprintId], references: [id])
+  hoursSpent   Int?        // Giờ thực tế hoàn thành (nullable, ước tính SP×4 nếu null)
+  tasks        Task[]
+  comments     Comment[]
+  attachments  Attachment[]
+  updatedAt    DateTime?   @updatedAt
+  statusHistory UserStoryStatusHistory[]
+  priorityOrder Int @default(0)
+}
+
+model UserStoryStatusHistory {
+  id          String    @id @default(cuid())
+  storyId     String
+  userStory   UserStory @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  status      String
+  changedAt   DateTime  @default(now())
+
+  @@index([storyId])
+}
+
+model Task {
+  id          String    @id @default(cuid())
+  title       String
+  description String?
+  status      String    @default("TODO") // TODO, IN_PROGRESS, DONE
+  storyId     String
+  userStory   UserStory @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  assigneeId  String?
+  assignee    User?     @relation("AssignedTasks", fields: [assigneeId], references: [id])
+  dueDate     DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  comments    Comment[]
+  attachments Attachment[]
+}
+
+model DailyStandup {
+  id        String   @id @default(cuid())
+  yesterday String
+  today     String
+  blockers  String?
+  date      DateTime @default(now())
+  userId    String
+  projectId String
+  user      User     @relation(fields: [userId], references: [id])
+  project   Project  @relation(fields: [projectId], references: [id])
+
+  @@index([projectId, date])
+}
+
+model Comment {
+  id          String    @id @default(cuid())
+  content     String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Hỗ trợ cả UserStory lẫn Task (giữ nguyên dữ liệu cũ)
+  userStoryId String?
+  userStory   UserStory? @relation(fields: [userStoryId], references: [id], onDelete: Cascade)
+
+  taskId      String?
+  task        Task?      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  userId      String
+  user        User       @relation(fields: [userId], references: [id])
+
+  @@map("comments")
+}
+model Attachment {
+  id          String    @id @default(cuid())
+  fileName    String
+  fileUrl     String
+  fileSize    Int
+  fileType    String
+  createdAt   DateTime  @default(now())
+
+  // Liên kết với Task hoặc User Story tương tự như Comment
+  userStoryId String?
+  userStory   UserStory? @relation(fields: [userStoryId], references: [id], onDelete: Cascade)
+  taskId      String?
+  task        Task?      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  userId      String
+  user        User       @relation(fields: [userId], references: [id])
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  userId      String
+  senderId    String?
+  content     String
+  type        String   @default("SYSTEM") // SYSTEM, KICKED, TASK_CHANGED, v.v..
+  taskTitle   String?
+  link        String?
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  
+  user        User     @relation("ReceivedNotifications", fields: [userId], references: [id], onDelete: Cascade)
+  sender      User?    @relation("SentNotifications", fields: [senderId], references: [id], onDelete: SetNull)
+}
+
+// ============================================================
+// MÔ-ĐUN TỔNG KẾT SPRINT (End Sprint & Contribution Assessment)
+// ============================================================
+
+/// Lưu kết quả tổng kết của một Sprint sau khi kết thúc.
+/// Được tạo bởi PO/SM khi gọi API generate.
+model SprintSummary {
+  id             String               @id @default(cuid())
+  sprintId       String               @unique
+  sprint         Sprint               @relation(fields: [sprintId], references: [id], onDelete: Cascade)
+  totalSP        Int                  // Tổng Story Points đạt được (status=DONE)
+  totalHours     Int                  // Tổng giờ làm việc thực tế (hoặc ước tính)
+  plannedSP      Int                  // Tổng SP ban đầu của Sprint
+  completionRate Float                // % hoàn thành = (doneStories / totalStories) × 100
+  notes          String?              // Nhận xét / Retrospective của PO/SM
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  contributions  MemberContribution[]
+}
+
+/// Lưu đóng góp của từng thành viên trong một Sprint.
+/// Được tính tự động khi generate SprintSummary.
+model MemberContribution {
+  id               String        @id @default(cuid())
+  summaryId        String
+  summary          SprintSummary @relation(fields: [summaryId], references: [id], onDelete: Cascade)
+  userId           String
+  user             User          @relation(fields: [userId], references: [id])
+  roleInSprint     String        // Vai trò tại thời điểm kết thúc (PO/SM/DEV/TESTER/DESIGNER)
+  storiesCompleted Int           // Số User Story hoàn thành (status=DONE)
+  storyPoints      Int           // Tổng SP của stories được assign và DONE
+  hoursWorked      Int           // Tổng giờ làm việc (thực tế hoặc ước tính)
+  // JSON string chứa chỉ số đặc trưng theo vai trò:
+  // Tester: {"testCases": 50, "bugsFound": 12}
+  // Designer: {"screens": 10, "components": 5}
+  // Dev: {"commits": 30} (tương lai)
+  specialMetric    String?       @default("{}")
+  contributionPct  Float         // % đóng góp cuối cùng (tổng = 100%)
+  createdAt        DateTime      @default(now())
+
+  @@unique([summaryId, userId]) // Mỗi thành viên chỉ có 1 entry / Sprint
+}

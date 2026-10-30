@@ -5,6 +5,7 @@ import api, { getInvitations, respondToInvitation, getAvatarUrl } from "../servi
 import NotificationBell from "./NotificationBell";
 import useNotifications from '../hooks/useNotifications.jsx';
 import ThemeToggle from "./ThemeToggle";
+import ConnectionStatusBadge from "./ConnectionStatusBadge";
 import { useAuth } from "../context/AuthContext";
 
 export default function TopBar({ projectId: propProjectId }) {
@@ -192,6 +193,9 @@ export default function TopBar({ projectId: propProjectId }) {
 
       {/* Right Actions - Safe from scrollbar */}
       <div className="flex items-center gap-2 md:gap-4 flex-shrink-0 pr-2">
+        <div className="flex-shrink-0">
+          <ConnectionStatusBadge />
+        </div>
         <div className="flex-shrink-0">
           <ThemeToggle />
         </div>

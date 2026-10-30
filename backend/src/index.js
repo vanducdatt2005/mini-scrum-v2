@@ -147,6 +147,60 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
+// US-REFRESH: LÀM MỚI TOKEN (Cho phép tự động Refresh Token trước/khi Handshake Socket)
+app.post("/api/auth/refresh", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = req.body.token || (authHeader?.startsWith("Bearer ") ? authHeader.split(" ")[1] : null);
+    if (!token) {
+      return res.status(401).json({ error: "Không tìm thấy token" });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET || "mini_scrum_secret");
+    } catch (err) {
+      if (err.name === "TokenExpiredError") {
+        decoded = jwt.decode(token);
+        const now = Math.floor(Date.now() / 1000);
+        if (decoded?.exp && now - decoded.exp > 7 * 24 * 60 * 60) {
+          return res.status(401).json({ error: "Token đã hết hạn quá 7 ngày, vui lòng đăng nhập lại" });
+        }
+      } else {
+        return res.status(401).json({ error: "Token không hợp lệ" });
+      }
+    }
+
+    if (!decoded || !decoded.userId) {
+      return res.status(401).json({ error: "Payload token không hợp lệ" });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+      select: { id: true, email: true, fullName: true, role: true }
+    });
+
+    if (!user) {
+      return res.status(401).json({ error: "Người dùng không tồn tại" });
+    }
+
+    const newToken = jwt.sign(
+      { userId: user.id, email: user.email, role: user.role },
+      process.env.JWT_SECRET || "mini_scrum_secret",
+      { expiresIn: "1d" }
+    );
+
+    res.json({
+      message: "Làm mới token thành công",
+      token: newToken,
+      user
+    });
+  } catch (err) {
+    console.error("Lỗi khi làm mới token:", err);
+    res.status(500).json({ error: "Lỗi server khi làm mới token" });
+  }
+});
+
 // US-036: LẤY DANH SÁCH PROJECT (Chỉ lấy các project user tham gia)
 app.get("/api/project", authMiddleware, async (req, res) => {
   const userId = req.user.userId;

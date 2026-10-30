@@ -24,15 +24,25 @@ function initSocket(server, prisma) {
   });
 
   // Middleware xác thực token WebSocket trong handshake (AC2)
-  io.use((socket, next) => {
+  io.use(async (socket, next) => {
     const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.split(" ")[1];
     if (token) {
       try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || "mini_scrum_secret");
         socket.user = decoded; // { userId, email, role }
-        console.log(`🔐 Socket authenticated for user ${decoded.userId} (${decoded.email})`);
+        console.log(`Socket authenticated for user ${decoded.userId} (${decoded.email})`);
+        // Fetch project memberships for the authenticated user
+        try {
+          const memberships = await prisma.projectMember.findMany({
+            where: { userId: decoded.userId },
+            select: { projectId: true },
+          });
+          socket.user.projectIds = memberships.map(m => m.projectId);
+        } catch (pmErr) {
+          console.error('Failed to fetch project memberships:', pmErr);
+        }
       } catch (err) {
-        console.warn(`⚠️ Socket auth error: ${err.name} - ${err.message}`);
+        console.warn(`Socket auth error: ${err.name} - ${err.message}`);
         if (err.name === "TokenExpiredError") {
           return next(new Error("TOKEN_EXPIRED"));
         }
@@ -43,12 +53,25 @@ function initSocket(server, prisma) {
   });
 
   io.on("connection", (socket) => {
-    console.log(`🔌 Socket connected: ${socket.id} (User: ${socket.user?.userId || 'guest'})`);
+    console.log(`Socket connected: ${socket.id} (User: ${socket.user?.userId || 'guest'})`);
 
     // Tự động join personal room nếu đã xác thực thành công qua handshake
     if (socket.user?.userId) {
+      // Join personal notification room
       socket.join(`user_${socket.user.userId}`);
-      console.log(`👤 Socket ${socket.id} auto-joined personal room: user_${socket.user.userId}`);
+      console.log(`Socket ${socket.id} auto-joined personal room: user_${socket.user.userId}`);
+      // Auto‑join all project rooms the user belongs to
+      if (Array.isArray(socket.user.projectIds)) {
+        socket.user.projectIds.forEach((pid) => {
+          const pIdStr = String(pid).trim();
+          const rawId = pIdStr.startsWith('project_') ? pIdStr.slice(8) : pIdStr;
+          const room = `project_${rawId}`;
+          socket.join(room);
+          socket.join(rawId);
+          if (pIdStr !== rawId) socket.join(pIdStr);
+          console.log(`Socket ${socket.id} auto‑joined project room: ${room}`);
+        });
+      }
     }
 
     // Tự động Rejoin danh sách Room khi kết nối lại (AC2)
@@ -57,16 +80,17 @@ function initSocket(server, prisma) {
       if (Array.isArray(projectIds)) {
         projectIds.forEach((pId) => {
           if (pId) {
-            socket.join(pId);
+            const room = `project_${pId}`;
+            socket.join(room);
             rejoinedProjects.push(pId);
-            console.log(`📂 Socket ${socket.id} rejoined project room: ${pId}`);
+            console.log(`Socket ${socket.id} rejoined project room: ${room}`);
           }
         });
       }
       const targetUserId = userId || socket.user?.userId;
       if (targetUserId) {
         socket.join(`user_${targetUserId}`);
-        console.log(`👤 Socket ${socket.id} rejoined personal room: user_${targetUserId}`);
+        console.log(`Socket ${socket.id} rejoined personal room: user_${targetUserId}`);
       }
       if (typeof callback === "function") {
         callback({ status: "ok", rejoinedProjects, userId: targetUserId });
@@ -74,36 +98,68 @@ function initSocket(server, prisma) {
     });
     // Project & User room handlers
 
-    socket.on("joinProject", (projectId) => {
-      if (projectId) {
-        socket.join(projectId);
-        console.log(`📂 Socket ${socket.id} joined project room: ${projectId}`);
+    socket.on("joinProject", (projectId, callback) => {
+      const pIdStr = String(projectId || '').trim();
+      const rawId = pIdStr.startsWith('project_') ? pIdStr.slice(8) : pIdStr;
+      const isMember = Boolean(
+        rawId &&
+        Array.isArray(socket.user?.projectIds) &&
+        (socket.user.projectIds.includes(rawId) || socket.user.projectIds.includes(pIdStr))
+      );
+
+      if (isMember) {
+        const room = `project_${rawId}`;
+        socket.join(room);
+        socket.join(rawId);
+        console.log(`Socket ${socket.id} joined project room: ${room}`);
+        socket.emit('joined', { room, projectId: rawId });
+        if (typeof callback === 'function') callback({ status: 'ok', room });
+      } else {
+        console.warn(`Unauthorized join attempt by user ${socket.user?.userId} to project ${projectId}`);
+        const errPayload = { code: 'UNAUTHORIZED_PROJECT', message: 'You are not a member of this project.' };
+        socket.emit('error', errPayload);
+        if (typeof callback === 'function') callback({ status: 'error', ...errPayload });
       }
     });
 
-    socket.on("leaveProject", (projectId) => {
+    socket.on("leaveProject", (projectId, callback) => {
       if (projectId) {
-        socket.leave(projectId);
-        console.log(`📂 Socket ${socket.id} left project room: ${projectId}`);
+        const pIdStr = String(projectId).trim();
+        const rawId = pIdStr.startsWith('project_') ? pIdStr.slice(8) : pIdStr;
+        socket.leave(pIdStr);
+        socket.leave(rawId);
+        socket.leave(`project_${rawId}`);
+        socket.leave(`project_${pIdStr}`);
+        console.log(`Socket ${socket.id} left project room: ${pIdStr}`);
+        if (typeof callback === 'function') callback({ status: 'ok' });
+      }
+    });
+
+    socket.on("listMyRooms", (data, callback) => {
+      const rooms = Array.from(socket.rooms);
+      if (typeof callback === 'function') {
+        callback(rooms);
+      } else {
+        socket.emit('myRooms', rooms);
       }
     });
 
     socket.on("joinUser", (userId) => {
       if (userId) {
         socket.join(`user_${userId}`);
-        console.log(`👤 Socket ${socket.id} joined personal room: user_${userId}`);
+        console.log(`Socket ${socket.id} joined personal room: user_${userId}`);
       }
     });
 
     socket.on("leaveUser", (userId) => {
       if (userId) {
         socket.leave(`user_${userId}`);
-        console.log(`👤 Socket ${socket.id} left personal room: user_${userId}`);
+        console.log(`Socket ${socket.id} left personal room: user_${userId}`);
       }
     });
 
     socket.on("disconnect", (reason) => {
-      console.log(`❌ Socket disconnected: ${socket.id}, reason: ${reason}`);
+      console.log(`Socket disconnected: ${socket.id}, reason: ${reason}`);
     });
   });
 
@@ -161,12 +217,12 @@ function initSocket(server, prisma) {
           if (params.model === "Task") eventName = "task:changed";
           if (params.model === "Comment") eventName = "comment:changed";
 
-          io.to(projectId).emit(eventName, {
+          io.to(projectId).to(`project_${projectId}`).emit(eventName, {
             action: params.action,
             projectId,
             entityId: result?.userStoryId || result?.taskId || null
           });
-          console.log(`📡 Emitted ${eventName} [${params.action}] to room ${projectId}`);
+          console.log(`Emitted ${eventName} [${params.action}] to room ${projectId}`);
 
           // --- US-029: In-app Notification ---
           if (["create", "update", "delete"].includes(params.action)) {

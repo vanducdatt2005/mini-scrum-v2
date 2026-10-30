@@ -1,6 +1,7 @@
 import { useSidebar } from "../context/SidebarContext";
 import { useNavigate } from "react-router-dom";
 import NotificationBell from "./NotificationBell";
+import ConnectionStatusBadge from "./ConnectionStatusBadge";
 
 const contributors = [
   "https://lh3.googleusercontent.com/aida-public/AB6AXuBjKL2ISrsCNns8o1KNta57CO8CEJ1XMRzuYwPe10xl4AfhRqOjlJxHphiFOnwPBbK-OvCqI01ZKDhkijPG8inIYpO1TPB5rHjd-PeKpH3xQ4qiyak89AmFlBz30ROkbEuc3foEzlUNkh-cI1AyMCumklnzqfkeKb2l0reslMgqDEm4ascvUsL8_FY-zrtroFodbBellAKHFsZf9i3wabuYYLEiW4fxYAIK6pHsYAhRS5_Qk5WnE4GMxOPE5Cu8rStLmOUaXrK7CN8",
@@ -42,6 +43,10 @@ export default function BacklogHeader({ contributorCount = 12, projectId, projec
             <span className="hidden lg:inline ml-2 font-bold text-xs whitespace-nowrap">Quản lý Team</span>
           </button>
         )}
+
+        <div className="flex-shrink-0">
+          <ConnectionStatusBadge />
+        </div>
 
         {/* Notification Bell - Visible on all sizes */}
         <div className="flex-shrink-0">

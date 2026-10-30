@@ -1,6 +1,8 @@
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import { Toaster } from 'react-hot-toast';
 import { NotificationProvider } from './context/NotificationContext';
+import { SocketProvider } from './context/SocketContext';
+import ConnectionStatusBanner from './components/ConnectionStatusBanner';
 import { SidebarProvider } from './context/SidebarContext';
 import Register from "./pages/Register";
 import Login from "./pages/Login";
@@ -19,8 +21,10 @@ import Settings from './pages/Settings';
 function App() {
   return (
     <Router>
-      <SidebarProvider>
+      <SocketProvider>
+        <SidebarProvider>
         <NotificationProvider>
+          <ConnectionStatusBanner />
           <Routes>
             <Route path="/" element={<Login />} />
             <Route path="/register" element={<Register />} />
@@ -41,6 +45,7 @@ function App() {
           </Routes>
         </NotificationProvider>
       </SidebarProvider>
+      </SocketProvider>
       <Toaster position="bottom-right" toastOptions={{ duration: 4000 }} />
     </Router>
   );

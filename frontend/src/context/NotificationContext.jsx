@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { getSocket } from '../hooks/useSocket';
+import { getSocket, setSocketUser } from '../hooks/useSocket';
 import { getNotifications, markNotificationAsRead } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
@@ -54,6 +54,7 @@ export const NotificationProvider = ({ children }) => {
     if (!currentUser?.id) return;
 
     const s = getSocket();
+    setSocketUser(currentUser.id);
     
     const joinUserRoom = () => {
       s.emit('joinUser', currentUser.id);
@@ -62,7 +63,7 @@ export const NotificationProvider = ({ children }) => {
     if (s.connected) {
       joinUserRoom();
     } else {
-      s.once('connect', joinUserRoom);
+      s.on('connect', joinUserRoom);
     }
 
     const handleNewNotification = (data) => {
@@ -102,6 +103,7 @@ export const NotificationProvider = ({ children }) => {
     s.on('notification:new', handleNewNotification);
 
     return () => {
+      s.off('connect', joinUserRoom);
       s.emit('leaveUser', currentUser.id);
       s.off('notification:new', handleNewNotification);
     };

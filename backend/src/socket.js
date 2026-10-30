@@ -1,4 +1,5 @@
 const { Server } = require("socket.io");
+const jwt = require("jsonwebtoken");
 
 let io = null;
 
@@ -22,8 +23,56 @@ function initSocket(server, prisma) {
     }
   });
 
+  // Middleware xác thực token WebSocket trong handshake (AC2)
+  io.use((socket, next) => {
+    const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.split(" ")[1];
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || "mini_scrum_secret");
+        socket.user = decoded; // { userId, email, role }
+        console.log(`🔐 Socket authenticated for user ${decoded.userId} (${decoded.email})`);
+      } catch (err) {
+        console.warn(`⚠️ Socket auth error: ${err.name} - ${err.message}`);
+        if (err.name === "TokenExpiredError") {
+          return next(new Error("TOKEN_EXPIRED"));
+        }
+        return next(new Error("AUTHENTICATION_FAILED"));
+      }
+    }
+    next();
+  });
+
   io.on("connection", (socket) => {
-    console.log(`🔌 Socket connected: ${socket.id}`);
+    console.log(`🔌 Socket connected: ${socket.id} (User: ${socket.user?.userId || 'guest'})`);
+
+    // Tự động join personal room nếu đã xác thực thành công qua handshake
+    if (socket.user?.userId) {
+      socket.join(`user_${socket.user.userId}`);
+      console.log(`👤 Socket ${socket.id} auto-joined personal room: user_${socket.user.userId}`);
+    }
+
+    // Tự động Rejoin danh sách Room khi kết nối lại (AC2)
+    socket.on("rejoinRooms", ({ projectIds, userId } = {}, callback) => {
+      const rejoinedProjects = [];
+      if (Array.isArray(projectIds)) {
+        projectIds.forEach((pId) => {
+          if (pId) {
+            socket.join(pId);
+            rejoinedProjects.push(pId);
+            console.log(`📂 Socket ${socket.id} rejoined project room: ${pId}`);
+          }
+        });
+      }
+      const targetUserId = userId || socket.user?.userId;
+      if (targetUserId) {
+        socket.join(`user_${targetUserId}`);
+        console.log(`👤 Socket ${socket.id} rejoined personal room: user_${targetUserId}`);
+      }
+      if (typeof callback === "function") {
+        callback({ status: "ok", rejoinedProjects, userId: targetUserId });
+      }
+    });
+    // Project & User room handlers
 
     socket.on("joinProject", (projectId) => {
       if (projectId) {
@@ -53,8 +102,8 @@ function initSocket(server, prisma) {
       }
     });
 
-    socket.on("disconnect", () => {
-      console.log(`❌ Socket disconnected: ${socket.id}`);
+    socket.on("disconnect", (reason) => {
+      console.log(`❌ Socket disconnected: ${socket.id}, reason: ${reason}`);
     });
   });
 

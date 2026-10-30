@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useSidebar } from "../context/SidebarContext";
 import { useNavigate } from "react-router-dom";
 import NotificationBell from "./NotificationBell";
+import ConnectionStatusBadge from "./ConnectionStatusBadge";
 import { useAuth } from "../context/AuthContext";
 import { getAvatarUrl } from "../services/api";
 
@@ -48,6 +49,10 @@ export default function BoardTopBar({ timeRemaining = "4 days 12 hours remaining
             <span className="hidden lg:inline ml-2 font-bold text-xs whitespace-nowrap">Quản lý Team</span>
           </button>
         )}
+
+        <div className="flex-shrink-0">
+          <ConnectionStatusBadge />
+        </div>
 
         {/* Notification Bell - Visible on all sizes */}
         <div className="flex-shrink-0">

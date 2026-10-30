@@ -19,6 +19,7 @@ api.interceptors.request.use((config) => {
 
 export const registerUser = (data) => api.post('/register', data);
 export const loginUser = (data) => api.post('/login', data);
+export const refreshToken = (token) => api.post('/auth/refresh', { token });
 
 export const addMemberToProject = (projectId, data) =>
   api.post(`/project/${projectId}/members`, data);

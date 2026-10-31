@@ -1,7 +1,11 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import JoinProjectModal from "./JoinProjectModal";
 
 export default function Sidebar({ activePage = "Dashboard", isOpen, onClose, projectId }) {
   const navigate = useNavigate();
+  const [showJoinModal, setShowJoinModal] = useState(false);
+
   const navItems = [
     { icon: "dashboard", label: "Dashboard", href: "/dashboard" },
     { icon: "list_alt", label: "Backlog", href: projectId ? `/projects/${projectId}/backlog` : "/backlog" },
@@ -93,8 +97,22 @@ export default function Sidebar({ activePage = "Dashboard", isOpen, onClose, pro
               </button>
             ))}
           </div>
+
+          {/* Quick Action: Join Project with Invite Code */}
+          <button
+            onClick={() => setShowJoinModal(true)}
+            className="w-full mt-4 flex items-center justify-center gap-2 px-3 py-2.5 rounded-2xl bg-primary/10 text-primary hover:bg-primary hover:text-white transition-all text-xs font-bold border border-primary/20 shadow-sm"
+          >
+            <span className="material-symbols-outlined text-base">key</span>
+            <span>Nhập mã mời</span>
+          </button>
         </div>
       </aside>
+
+      <JoinProjectModal
+        isOpen={showJoinModal}
+        onClose={() => setShowJoinModal(false)}
+      />
     </>
   );
 }

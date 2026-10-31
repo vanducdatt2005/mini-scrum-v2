@@ -31,6 +31,7 @@ model Project {
   name        String
   description String?
   goal        String?
+  inviteCode  String?         @unique
   createdAt   DateTime        @default(now())
   members     ProjectMember[]
   userStories UserStory[]

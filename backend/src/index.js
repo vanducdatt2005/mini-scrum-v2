@@ -369,8 +369,9 @@ app.post("/api/project", authMiddleware, async (req, res) => {
   const userId = req.user.userId;
 
   try {
+    const inviteCode = await generateInviteCode();
     const project = await prisma.project.create({
-      data: { name, description, goal },
+      data: { name, description, goal, inviteCode },
     });
 
     // Tự động gán người tạo làm Product Owner (PO)
@@ -415,6 +416,173 @@ app.post("/api/project/:projectId/members", async (req, res) => {
     res.status(400).json({
       error: "Không thể mời thành viên. Lỗi: " + err.message,
     });
+  }
+});
+
+
+// =========================================================================
+// US-059: TÍNH NĂNG MÃ MỜI THAM GIA DỰ ÁN (GOOGLE CLASSROOM STYLE)
+// =========================================================================
+const generateInviteCode = async () => {
+  const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  for (let attempt = 0; attempt < 20; attempt++) {
+    let code = '';
+    for (let i = 0; i < 6; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    const existing = await prisma.project.findUnique({ where: { inviteCode: code } });
+    if (!existing) return code;
+  }
+  return 'PJ' + Math.random().toString(36).substring(2, 6).toUpperCase();
+};
+
+// US-059: Lấy mã mời dự án
+app.get("/api/project/:projectId/invite-code", authMiddleware, async (req, res) => {
+  const { projectId } = req.params;
+  const userId = req.user.userId;
+
+  try {
+    const member = await prisma.projectMember.findUnique({
+      where: { userId_projectId: { userId, projectId } },
+    });
+    if (!member) {
+      return res.status(403).json({ error: "Bạn không phải thành viên dự án này" });
+    }
+
+    let project = await prisma.project.findUnique({
+      where: { id: projectId },
+      select: { id: true, name: true, inviteCode: true },
+    });
+
+    if (!project) {
+      return res.status(404).json({ error: "Không tìm thấy dự án" });
+    }
+
+    if (!project.inviteCode) {
+      const code = await generateInviteCode();
+      project = await prisma.project.update({
+        where: { id: projectId },
+        data: { inviteCode: code },
+        select: { id: true, name: true, inviteCode: true },
+      });
+    }
+
+    res.json({ inviteCode: project.inviteCode, projectName: project.name });
+  } catch (err) {
+    console.error("Lỗi khi lấy mã mời:", err);
+    res.status(500).json({ error: "Lỗi máy chủ khi lấy mã mời" });
+  }
+});
+
+// US-059: Tạo lại mã mời dự án (Chỉ PO / SM)
+app.post("/api/project/:projectId/regenerate-invite-code", authMiddleware, async (req, res) => {
+  const { projectId } = req.params;
+  const userId = req.user.userId;
+
+  try {
+    const isPOorSM = await checkPOorSM(userId, projectId);
+    if (!isPOorSM) {
+      return res.status(403).json({ error: "Chỉ Product Owner (PO) hoặc Scrum Master (SM) mới có quyền tạo lại mã mời!" });
+    }
+
+    const newCode = await generateInviteCode();
+    const updated = await prisma.project.update({
+      where: { id: projectId },
+      data: { inviteCode: newCode },
+      select: { id: true, name: true, inviteCode: true },
+    });
+
+    res.json({ message: "Đã tạo lại mã mời mới thành công!", inviteCode: updated.inviteCode });
+  } catch (err) {
+    console.error("Lỗi khi tạo lại mã mời:", err);
+    res.status(500).json({ error: "Lỗi máy chủ khi tạo lại mã mời" });
+  }
+});
+
+// US-059: Tham gia dự án bằng Mã mời (Classroom Style)
+app.post("/api/project/join-by-code", authMiddleware, async (req, res) => {
+  const { inviteCode } = req.body;
+  const userId = req.user.userId;
+
+  if (!inviteCode || typeof inviteCode !== 'string' || !inviteCode.trim()) {
+    return res.status(400).json({ error: "Vui lòng nhập mã mời dự án!" });
+  }
+
+  const cleanCode = inviteCode.trim().toUpperCase();
+
+  try {
+    const project = await prisma.project.findUnique({
+      where: { inviteCode: cleanCode },
+      include: {
+        members: {
+          where: { userId },
+        },
+      },
+    });
+
+    if (!project) {
+      return res.status(404).json({ error: "Mã mời không tồn tại hoặc không chính xác!" });
+    }
+
+    const currentMembership = project.members[0];
+
+    if (currentMembership && currentMembership.status === "ACCEPTED") {
+      return res.status(400).json({
+        error: `Bạn đã là thành viên của dự án "${project.name}" rồi!`,
+        alreadyMember: true,
+        projectId: project.id,
+      });
+    }
+
+    if (currentMembership && currentMembership.status === "PENDING") {
+      await prisma.projectMember.update({
+        where: { id: currentMembership.id },
+        data: { status: "ACCEPTED" },
+      });
+    } else {
+      await prisma.projectMember.create({
+        data: {
+          userId,
+          projectId: project.id,
+          role: "MEMBER",
+          status: "ACCEPTED",
+        },
+      });
+    }
+
+    // Thông báo cho PO của project
+    try {
+      const pos = await prisma.projectMember.findMany({
+        where: { projectId: project.id, role: "PO" },
+      });
+      const userJoined = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { fullName: true, email: true },
+      });
+      for (const po of pos) {
+        if (po.userId !== userId) {
+          await prisma.notification.create({
+            data: {
+              userId: po.userId,
+              content: `${userJoined?.fullName || "Một thành viên"} đã tham gia dự án "${project.name}" bằng mã mời.`,
+              type: "INVITATION",
+              link: `/projects/${project.id}/members`,
+            },
+          });
+        }
+      }
+    } catch (notifErr) {
+      console.warn("Lỗi gửi thông báo khi join qua mã mời:", notifErr);
+    }
+
+    res.json({
+      message: `Đã tham gia dự án "${project.name}" thành công!`,
+      projectId: project.id,
+      projectName: project.name,
+    });
+  } catch (err) {
+    console.error("Lỗi khi tham gia dự án bằng mã mời:", err);
+    res.status(500).json({ error: "Lỗi máy chủ khi tham gia dự án" });
   }
 });
 
@@ -660,6 +828,64 @@ app.get("/api/project/:projectId/userstories", async (req, res) => {
 });
 
 // (Route /reorder đã được chuyển lên trước /:id ở phía trên)
+
+
+// =========================================================================
+// US-063: API ĐỐI CHIẾU TRẠNG THÁI BOARD (STATE RECONCILIATION - AC2/AC3)
+// =========================================================================
+app.get("/api/project/:projectId/board-state", authMiddleware, async (req, res) => {
+  const { projectId } = req.params;
+  const userId = req.user.userId;
+
+  try {
+    const member = await prisma.projectMember.findUnique({
+      where: { userId_projectId: { userId, projectId } }
+    });
+    if (!member) {
+      return res.status(403).json({ error: "Bạn không có quyền truy cập dự án này" });
+    }
+
+    const activeSprint = await prisma.sprint.findFirst({
+      where: { projectId, status: 'ACTIVE' }
+    });
+
+    const stories = await prisma.userStory.findMany({
+      where: {
+        projectId,
+        ...(activeSprint ? { sprintId: activeSprint.id } : {})
+      },
+      include: {
+        tasks: {
+          include: {
+            assignee: {
+              select: { id: true, fullName: true, email: true, avatar: true }
+            }
+          },
+          orderBy: { createdAt: "asc" }
+        },
+        assignee: {
+          select: { id: true, fullName: true, email: true, avatar: true }
+        },
+        comments: {
+          select: { id: true }
+        }
+      },
+      orderBy: [{ backlogOrder: "asc" }, { title: "asc" }]
+    });
+
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.json({
+      status: "ok",
+      serverTimestamp: Date.now(),
+      projectId,
+      activeSprint,
+      stories
+    });
+  } catch (err) {
+    console.error("Lỗi khi lấy board state:", err);
+    res.status(500).json({ error: "Lỗi máy chủ khi đối chiếu board state" });
+  }
+});
 
 // US-015: LẤY DANH SÁCH SPRINT
 app.get("/api/project/:projectId/sprints", authMiddleware, async (req, res) => {
@@ -1671,3 +1897,4 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Server mạng tại http://0.0.0.0:${PORT}`);
   console.log(`🔌 Socket.io đã sẵn sàng`);
 });
+module.exports = { app, server, prisma };

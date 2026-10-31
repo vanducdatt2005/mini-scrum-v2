@@ -144,6 +144,65 @@ function initSocket(server, prisma) {
       }
     });
 
+    // US-063: Socket event for State Reconciliation (AC2)
+    socket.on("reconcileBoardState", async ({ projectId, lastSyncTimestamp } = {}, callback) => {
+      try {
+        const cleanId = String(projectId || '').replace(/^project_/, '');
+        if (!cleanId) {
+          if (typeof callback === 'function') callback({ status: 'error', error: 'Missing projectId' });
+          return;
+        }
+
+        const isMember = Array.isArray(socket.user?.projectIds) && socket.user.projectIds.includes(cleanId);
+        if (!isMember) {
+          if (typeof callback === 'function') callback({ status: 'error', error: 'UNAUTHORIZED_PROJECT' });
+          return;
+        }
+
+        const activeSprint = await prisma.sprint.findFirst({
+          where: { projectId: cleanId, status: 'ACTIVE' }
+        });
+
+        const stories = await prisma.userStory.findMany({
+          where: {
+            projectId: cleanId,
+            ...(activeSprint ? { sprintId: activeSprint.id } : {})
+          },
+          include: {
+            tasks: {
+              include: {
+                assignee: {
+                  select: { id: true, fullName: true, email: true, avatar: true }
+                }
+              }
+            },
+            assignee: {
+              select: { id: true, fullName: true, email: true, avatar: true }
+            }
+          },
+          orderBy: { order: 'asc' }
+        });
+
+        const serverTimestamp = Date.now();
+        console.log(`Reconciled board state for project ${cleanId}: ${stories.length} stories`);
+        
+        if (typeof callback === 'function') {
+          callback({
+            status: 'ok',
+            serverTimestamp,
+            projectId: cleanId,
+            activeSprint,
+            stories
+          });
+        }
+      } catch (err) {
+        console.error('Error reconciling board state:', err);
+        if (typeof callback === 'function') {
+          callback({ status: 'error', error: err.message });
+        }
+      }
+    });
+
     socket.on("joinUser", (userId) => {
       if (userId) {
         socket.join(`user_${userId}`);
@@ -217,10 +276,16 @@ function initSocket(server, prisma) {
           if (params.model === "Task") eventName = "task:changed";
           if (params.model === "Comment") eventName = "comment:changed";
 
+          const eventId = `evt_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+          const entityId = result?.id || result?.userStoryId || result?.taskId || null;
           io.to(projectId).to(`project_${projectId}`).emit(eventName, {
+            eventId,
             action: params.action,
             projectId,
-            entityId: result?.userStoryId || result?.taskId || null
+            model: params.model,
+            entityId,
+            data: result || null,
+            timestamp: Date.now()
           });
           console.log(`Emitted ${eventName} [${params.action}] to room ${projectId}`);
 

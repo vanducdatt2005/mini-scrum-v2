@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import api, { deleteProject } from '../services/api';
+import api, { deleteProject, getProjectInviteCode, regenerateInviteCode } from '../services/api';
 
 const ROLES = ['PO', 'SM', 'MEMBER'];
 const ROLE_STYLE = {
@@ -18,7 +18,12 @@ export default function ManageMembers() {
   const [success, setSuccess] = useState(null);
   const [updatingId, setUpdatingId] = useState(null);
 
-  // Smart Invite states
+  // US-059: Invite Code states (Google Classroom Style)
+  const [inviteCode, setInviteCode] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [isRegenerating, setIsRegenerating] = useState(false);
+
+  // Smart Invite states (direct invite by email/name)
   const [searchQuery, setSearchQuery] = useState("");
   const [suggestions, setSuggestions] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -27,7 +32,10 @@ export default function ManageMembers() {
   const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
 
   useEffect(() => {
-    if (projectId) fetchMembers();
+    if (projectId) {
+      fetchMembers();
+      fetchInviteCode();
+    }
   }, [projectId]);
 
   // Search logic (Autocomplete)
@@ -55,6 +63,40 @@ export default function ManageMembers() {
       setError(err.response?.data?.error || 'Không thể tải danh sách thành viên.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchInviteCode = async () => {
+    try {
+      const res = await getProjectInviteCode(projectId);
+      if (res.data?.inviteCode) {
+        setInviteCode(res.data.inviteCode);
+      }
+    } catch (err) {
+      console.warn('Lỗi khi lấy mã mời:', err);
+    }
+  };
+
+  const handleCopyCode = () => {
+    if (!inviteCode) return;
+    navigator.clipboard.writeText(inviteCode);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleRegenerateCode = async () => {
+    if (!window.confirm("Bạn có chắc chắn muốn tạo lại mã mời mới? Mã mời cũ sẽ bị vô hiệu hóa ngay lập tức.")) return;
+    setIsRegenerating(true);
+    try {
+      const res = await regenerateInviteCode(projectId);
+      setInviteCode(res.data.inviteCode);
+      setSuccess("Đã tạo lại mã mời mới thành công!");
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err) {
+      setError(err.response?.data?.error || "Lỗi khi tạo lại mã mời");
+      setTimeout(() => setError(null), 3000);
+    } finally {
+      setIsRegenerating(false);
     }
   };
 
@@ -120,7 +162,6 @@ export default function ManageMembers() {
     }
   };
 
-
   const currentMember = members.find(m => m.userId === currentUser.id);
   const isPO = currentMember?.role === 'PO';
   const isManagement = currentMember?.role === 'PO' || currentMember?.role === 'SM';
@@ -165,7 +206,7 @@ export default function ManageMembers() {
                 )}
               </div>
               <p className="text-sm text-on-surface-variant font-medium max-w-lg">
-                {isPO ? 'Bạn là Product Owner (PO) — có quyền thay đổi vai trò và xóa thành viên.' : isManagement ? 'Bạn là Scrum Master (SM) — có quyền thay đổi vai trò và mời thành viên.' : 'Bạn đang xem danh sách thành viên dự án.'}
+                {isPO ? 'Bạn là Product Owner (PO) — có quyền thay đổi vai trò, tạo lại mã mời và xóa thành viên.' : isManagement ? 'Bạn là Scrum Master (SM) — có quyền thay đổi vai trò và mời thành viên.' : 'Bạn đang xem danh sách thành viên dự án.'}
               </p>
             </div>
             <div className="bg-primary/5 px-4 py-3 rounded-2xl flex md:flex-col items-center justify-between md:justify-center min-w-[100px] gap-2">
@@ -175,10 +216,61 @@ export default function ManageMembers() {
           </div>
 
           <div className="p-6 md:p-8">
-            {/* SMART INVITE SECTION */}
+            {/* US-059: GOOGLE CLASSROOM STYLE INVITE CODE SECTION */}
+            <div className="mb-10 p-6 bg-gradient-to-br from-primary/5 via-primary/[0.08] to-transparent rounded-3xl border border-primary/20 shadow-sm">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <span className="material-symbols-outlined text-primary text-xl">vpn_key</span>
+                    <h3 className="text-sm font-black text-primary uppercase tracking-wider">Mã mời tham gia dự án (Invite Code)</h3>
+                  </div>
+                  <p className="text-xs text-on-surface-variant max-w-md leading-relaxed">
+                    Chia sẻ mã mời này để bất kỳ ai cũng có thể tự nhập và tham gia dự án ngay lập tức (như Google Classroom), không cần gửi lời mời từng người.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3 bg-white p-3.5 px-5 rounded-2xl shadow-sm border border-primary/15 self-start md:self-auto">
+                  <div className="flex flex-col">
+                    <span className="text-[9px] font-bold text-on-surface-variant/70 uppercase tracking-widest">Mã mời</span>
+                    <span className="text-2xl font-mono font-black text-primary tracking-widest select-all">
+                      {inviteCode || "------"}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 ml-3 pl-3 border-l border-outline-variant/15">
+                    <button
+                      onClick={handleCopyCode}
+                      disabled={!inviteCode}
+                      className="px-3 py-2 bg-primary text-white hover:opacity-90 active:scale-95 rounded-xl transition-all shadow-sm flex items-center gap-1.5 text-xs font-bold"
+                      title="Sao chép mã mời"
+                    >
+                      <span className="material-symbols-outlined text-base">
+                        {copied ? 'check' : 'content_copy'}
+                      </span>
+                      <span>{copied ? 'Đã sao chép!' : 'Sao chép'}</span>
+                    </button>
+
+                    {isManagement && (
+                      <button
+                        onClick={handleRegenerateCode}
+                        disabled={isRegenerating}
+                        className="p-2 bg-surface-container text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded-xl transition-all text-xs font-bold flex items-center justify-center"
+                        title="Tạo lại mã mời mới (mã cũ sẽ bị vô hiệu)"
+                      >
+                        <span className={`material-symbols-outlined text-lg ${isRegenerating ? 'animate-spin' : ''}`}>
+                          autorenew
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* DIRECT SMART INVITE SECTION */}
             {isManagement && (
               <div className="mb-10 relative">
-                <label className="block text-xs font-black text-primary uppercase tracking-widest mb-3 px-1">Mời thành viên mới</label>
+                <label className="block text-xs font-black text-primary uppercase tracking-widest mb-3 px-1">Hoặc mời trực tiếp qua Email / Tên</label>
                 <div className="relative group">
                   <div className={`flex items-center gap-3 bg-white border ${searchQuery ? 'border-primary shadow-lg shadow-primary/5' : 'border-outline-variant/10'} rounded-2xl px-5 py-4 focus-within:ring-4 focus-within:ring-primary/10 transition-all`}>
                     <span className="material-symbols-outlined text-primary/60 group-focus-within:text-primary transition-colors">person_add</span>

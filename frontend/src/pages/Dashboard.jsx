@@ -6,6 +6,7 @@ import MyTasks from "../components/MyTasks";
 import RecentActivity from "../components/RecentActivity";
 import SprintStats from "../components/SprintStats";
 import FAB from "../components/FAB";
+import JoinProjectModal from "../components/JoinProjectModal";
 import api, { getDashboardStats, getSprintsByProject } from "../services/api";
 
 const getTimeRemaining = (endDate) => {
@@ -26,17 +27,28 @@ export default function Dashboard() {
   const [activeSprint, setActiveSprint] = useState(null);
   const [projectId, setProjectId] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [showJoinModal, setShowJoinModal] = useState(false);
   const navigate = useNavigate();
 
-  useEffect(() => {
+  const fetchProjects = (targetProjectId) => {
     setIsLoading(true);
     api.get("/project").then((res) => {
       setProjects(res.data);
       if (res.data && res.data.length > 0) {
-        if (!projectId) setProjectId(res.data[0].id);
+        if (targetProjectId) {
+          setProjectId(targetProjectId);
+        } else if (!projectId || !res.data.some(p => p.id === projectId)) {
+          setProjectId(res.data[0].id);
+        }
+      } else {
+        setProjectId(null);
       }
       setIsLoading(false);
     }).catch(() => navigate("/login"));
+  };
+
+  useEffect(() => {
+    fetchProjects();
   }, [navigate]);
 
   useEffect(() => {
@@ -82,25 +94,40 @@ export default function Dashboard() {
             Chào mừng đến với Mini Scrum
           </h2>
           <p className="text-on-surface-variant text-sm mb-8 max-w-md">
-            Bạn chưa tham gia dự án nào. Hãy tạo dự án mới hoặc kiểm tra lời mời.
+            Bạn chưa tham gia dự án nào. Hãy tạo dự án mới hoặc nhập mã mời để tham gia ngay!
           </p>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <button 
+              onClick={() => setShowJoinModal(true)}
+              className="px-6 py-2.5 bg-primary text-on-primary rounded-xl font-bold text-sm hover:opacity-90 shadow-md shadow-primary/20 transition-all flex items-center gap-2"
+            >
+              <span className="material-symbols-outlined text-[20px]">key</span>
+              Tham gia bằng mã mời
+            </button>
             <button 
               onClick={() => navigate("/create-project")}
-              className="px-6 py-2.5 bg-primary text-on-primary rounded-xl font-bold text-sm hover:opacity-90 transition-opacity flex items-center gap-2"
+              className="px-6 py-2.5 bg-surface-container text-on-surface hover:bg-surface-container-high rounded-xl font-bold text-sm transition-colors flex items-center gap-2"
             >
               <span className="material-symbols-outlined text-[20px]">add</span>
-              Tạo dự án
+              Tạo dự án mới
             </button>
             <button 
               onClick={() => navigate("/dashboard?showNotifications=true")}
-              className="px-6 py-2.5 bg-surface-container text-on-surface rounded-xl font-bold text-sm hover:bg-surface-container-high transition-colors flex items-center gap-2"
+              className="px-6 py-2.5 bg-surface-container/60 text-on-surface-variant rounded-xl font-semibold text-sm hover:bg-surface-container transition-colors flex items-center gap-2"
             >
               <span className="material-symbols-outlined text-[20px]">notifications</span>
               Xem lời mời
             </button>
           </div>
         </div>
+
+        <JoinProjectModal
+          isOpen={showJoinModal}
+          onClose={() => setShowJoinModal(false)}
+          onSuccess={(data) => {
+            fetchProjects(data.projectId);
+          }}
+        />
       </MainLayout>
     );
   }
@@ -118,13 +145,23 @@ export default function Dashboard() {
               {activeProject?.key || "MGMT"} {activeSprint ? `• ${activeSprint.name}` : ""}
             </p>
           </div>
-          <button 
-            onClick={() => navigate("/create-project")}
-            className="flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary rounded-lg font-medium hover:bg-primary/20 transition-colors text-sm w-fit"
-          >
-            <span className="material-symbols-outlined text-[20px]">add</span>
-            Dự án mới
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowJoinModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-surface-container-high hover:bg-primary/10 text-on-surface hover:text-primary rounded-xl font-bold transition-all text-sm border border-outline-variant/10 shadow-sm"
+              title="Nhập mã mời để tham gia dự án khác"
+            >
+              <span className="material-symbols-outlined text-[20px] text-primary">key</span>
+              <span>Tham gia bằng mã</span>
+            </button>
+            <button 
+              onClick={() => navigate("/create-project")}
+              className="flex items-center gap-2 px-4 py-2 bg-primary text-on-primary rounded-xl font-bold hover:opacity-90 shadow-sm transition-all text-sm"
+            >
+              <span className="material-symbols-outlined text-[20px]">add</span>
+              <span>Dự án mới</span>
+            </button>
+          </div>
         </div>
 
         {/* Project Selector (Simplified) */}
@@ -181,6 +218,15 @@ export default function Dashboard() {
           icon="inventory_2"
         />
       )}
+
+      {/* Join Project Modal (US-059) */}
+      <JoinProjectModal
+        isOpen={showJoinModal}
+        onClose={() => setShowJoinModal(false)}
+        onSuccess={(data) => {
+          fetchProjects(data.projectId);
+        }}
+      />
     </MainLayout>
   );
 }

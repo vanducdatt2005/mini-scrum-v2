@@ -294,9 +294,16 @@ export const SocketProvider = ({ children }) => {
     const handleOnline = () => {
       console.log('🌐 Trình duyệt đã có kết nối mạng (online)');
       setIsOnline(true);
-      if (!s.connected) {
-        manualReconnect();
-      }
+      // Kết nối lại WebSocket ngay lập tức và force handshake
+      manualReconnect();
+      // Thông báo cho toàn bộ các subscriber và reconciliation callbacks
+      reconnectCallbacks.forEach((cb) => {
+        try {
+          cb();
+        } catch (e) {
+          console.error('Error in reconnect callback:', e);
+        }
+      });
     };
 
     const handleOffline = () => {
@@ -304,6 +311,15 @@ export const SocketProvider = ({ children }) => {
       setIsOnline(false);
       setConnectionStatus('disconnected');
       setLastError('Không có kết nối mạng');
+      // Chủ động ngắt socket để tránh zombie connection
+      try {
+        const currentSock = socketRef.current || getSocket();
+        if (currentSock && currentSock.connected) {
+          currentSock.disconnect();
+        }
+      } catch (e) {
+        console.error('Error disconnecting socket on offline:', e);
+      }
     };
 
     window.addEventListener('online', handleOnline);

@@ -3,6 +3,8 @@ import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {useAuth} from "../context/AuthContext";
 import useSocket from "../hooks/useSocket";
+import useBoardReconciliation from "../hooks/useBoardReconciliation";
+import { sanitizeStoriesTree, deduplicateById } from "../utils/boardReconciliation";
 // === Thêm thư viện Drag & Drop ===
 import { 
   DndContext, 
@@ -111,7 +113,7 @@ export default function Backlog() {
       api.get(`/project/${projectId}/role`),
       getProjectMembers(projectId)
     ]).then(([storiesRes, sprintsRes, projectRes, roleRes, membersRes]) => {
-      setStories(Array.isArray(storiesRes.data) ? storiesRes.data : []);
+      setStories(Array.isArray(storiesRes.data) ? sanitizeStoriesTree(storiesRes.data) : []);
       setSprints(Array.isArray(sprintsRes.data) ? sprintsRes.data : []);
       setProject(projectRes.data);
       setUserRole(roleRes.data.role);
@@ -131,7 +133,7 @@ export default function Backlog() {
         getSprintsByProject(projectId),
         getProjectMembers(projectId)
       ]);
-      setStories(Array.isArray(storiesRes.data) ? storiesRes.data : []);
+      setStories(Array.isArray(storiesRes.data) ? sanitizeStoriesTree(storiesRes.data) : []);
       setSprints(Array.isArray(sprintsRes.data) ? sprintsRes.data : []);
       setMembers(Array.isArray(membersRes.data) ? membersRes.data : []);
     } catch (err) {
@@ -139,7 +141,12 @@ export default function Backlog() {
     }
   };
 
-  useSocket(projectId, loadData);
+  const { isSyncing, syncStatus, performReconciliation } = useBoardReconciliation({
+    projectId,
+    stories,
+    setStories,
+    onReloadFull: loadData
+  });
 
   // === Lọc stories cho Product Backlog ===
   // Stories trong backlog là những cái không có sprintId (chưa được gán vào Sprint nào)
@@ -548,7 +555,7 @@ export default function Backlog() {
   return (
     <MainLayout
       activePage="Backlog"
-      header={<BacklogHeader projectId={projectId} projectName={project?.name} />}
+      header={<BacklogHeader projectId={projectId} projectName={project?.name} isSyncing={isSyncing} syncStatus={syncStatus} />}
       projectId={projectId}
     >
       <div className="space-y-6 md:space-y-10 pb-20 w-full max-w-full overflow-x-hidden">

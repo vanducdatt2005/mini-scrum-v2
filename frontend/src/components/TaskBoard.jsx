@@ -13,7 +13,8 @@ export default function TaskBoard({
   onDeleteTask, 
   onAddTask, 
   userRole,
-  currentUser   // ← THÊM DÒNG NÀY
+  currentUser,
+  projectId
 }) {
   const [selectedSprintId, setSelectedSprintId] = useState(null);
 
@@ -71,7 +72,8 @@ export default function TaskBoard({
         onDeleteTask={onDeleteTask}
         onAddTask={onAddTask}
         userRole={userRole}
-        currentUser={currentUser}     // ← THÊM DÒNG NÀY
+        currentUser={currentUser}
+        projectId={projectId}
       />
     </div>
   );

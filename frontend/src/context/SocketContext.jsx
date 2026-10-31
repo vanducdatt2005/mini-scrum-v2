@@ -102,6 +102,16 @@ export const getSocket = () => {
       console.log('📡 [GlobalSocket] comment:changed:', data);
       dispatchProjectEvent(data);
     });
+
+    globalSocket.on('comment:new', (data) => {
+      console.log('📡 [GlobalSocket] comment:new:', data);
+      dispatchProjectEvent(data);
+    });
+
+    globalSocket.on('comment:deleted', (data) => {
+      console.log('📡 [GlobalSocket] comment:deleted:', data);
+      dispatchProjectEvent(data);
+    });
   }
   return globalSocket;
 };

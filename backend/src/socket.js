@@ -96,8 +96,8 @@ function initSocket(server, prisma) {
         callback({ status: "ok", rejoinedProjects, userId: targetUserId });
       }
     });
-    // Project & User room handlers
 
+    // Project & User room handlers
     socket.on("joinProject", (projectId, callback) => {
       const pIdStr = String(projectId || '').trim();
       const rawId = pIdStr.startsWith('project_') ? pIdStr.slice(8) : pIdStr;
@@ -217,6 +217,35 @@ function initSocket(server, prisma) {
       }
     });
 
+    // Room handlers cho Story & Task Comments (Realtime Discussion)
+    socket.on("joinStory", (storyId) => {
+      if (storyId) {
+        socket.join(`story_${storyId}`);
+        console.log(`Socket ${socket.id} joined story room: story_${storyId}`);
+      }
+    });
+
+    socket.on("leaveStory", (storyId) => {
+      if (storyId) {
+        socket.leave(`story_${storyId}`);
+        console.log(`Socket ${socket.id} left story room: story_${storyId}`);
+      }
+    });
+
+    socket.on("joinTask", (taskId) => {
+      if (taskId) {
+        socket.join(`task_${taskId}`);
+        console.log(`Socket ${socket.id} joined task room: task_${taskId}`);
+      }
+    });
+
+    socket.on("leaveTask", (taskId) => {
+      if (taskId) {
+        socket.leave(`task_${taskId}`);
+        console.log(`Socket ${socket.id} left task room: task_${taskId}`);
+      }
+    });
+
     socket.on("disconnect", (reason) => {
       console.log(`Socket disconnected: ${socket.id}, reason: ${reason}`);
     });
@@ -289,8 +318,25 @@ function initSocket(server, prisma) {
           });
           console.log(`Emitted ${eventName} [${params.action}] to room ${projectId}`);
 
-          // --- US-029: In-app Notification ---
-          if (["create", "update", "delete"].includes(params.action)) {
+          // Emit trực tiếp vào room cụ thể của Story hoặc Task khi có comment
+          if (params.model === "Comment" && result) {
+            const commentPayload = {
+              action: params.action,
+              entityType: result.userStoryId ? "story" : "task",
+              entityId: result.userStoryId || result.taskId,
+              projectId,
+              comment: result
+            };
+            if (result.userStoryId) {
+              io.to(`story_${result.userStoryId}`).emit("comment:new", commentPayload);
+            }
+            if (result.taskId) {
+              io.to(`task_${result.taskId}`).emit("comment:new", commentPayload);
+            }
+          }
+
+          // --- US-029: In-app Notification (chỉ áp dụng cho Task và UserStory, không gửi thông báo rác cho Comment) ---
+          if (["create", "update", "delete"].includes(params.action) && params.model !== "Comment") {
             const title = result?.title || "Một tác vụ";
             const type = params.model === "Task" ? "TASK_CHANGED" : "STORY_CHANGED";
             const actionText = params.action === "create" ? "được tạo mới" : params.action === "update" ? "đã được cập nhật" : "đã bị xóa";

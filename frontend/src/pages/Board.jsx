@@ -320,6 +320,8 @@ export default function BoardPage() {
         loading={isSubmitting}
         initialData={editingStory}
         currentUser={currentUser}
+        projectId={projectId}
+        userRole={userRole}
       />
 
       {/* FAB */}

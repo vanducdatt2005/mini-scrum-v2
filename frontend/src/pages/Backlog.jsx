@@ -654,6 +654,7 @@ export default function Backlog() {
               }}
               userRole={userRole}
               currentUser={currentUser}
+              projectId={projectId}
             />
           )}
 

@@ -117,16 +117,14 @@ export default function UserStoryCard({
             {/* Right Side Icons (Comments + Actions + Avatar) */}
             <div className="flex items-center gap-2">
               {/* Comments */}
-              {comments.length > 0 && (
-                <div 
-                  className="flex items-center gap-1 text-primary bg-primary/5 px-2 py-0.5 rounded-lg border border-primary/20 hover:bg-primary/10 transition-colors"
-                  title={`${comments.length} bình luận`}
-                  onClick={(e) => { e.stopPropagation(); onEdit?.({ id, title, description, priority, storyPoints, assignee, tags, comments }); }}
-                >
-                  <span className="material-symbols-outlined text-[14px]">forum</span>
-                  <span className="text-[10px] font-bold">{comments.length}</span>
-                </div>
-              )}
+              <div 
+                className="flex items-center gap-1 text-primary bg-primary/5 px-2 py-0.5 rounded-lg border border-primary/20 hover:bg-primary/10 transition-colors cursor-pointer"
+                title={`${comments.length} bình luận (bấm để xem & gửi bình luận)`}
+                onClick={(e) => { e.stopPropagation(); onEdit?.({ id, title, description, priority, storyPoints, assignee, tags, comments }); }}
+              >
+                <span className="material-symbols-outlined text-[14px]">forum</span>
+                <span className="text-[10px] font-bold">{comments.length}</span>
+              </div>
 
               {/* Actions */}
               <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
@@ -350,16 +348,14 @@ export default function UserStoryCard({
           </div>
 
           {/* US-045: Comments */}
-          {comments.length > 0 && (
-            <div 
-              className="flex items-center gap-1 text-primary bg-primary/5 px-3 py-1 rounded-lg border border-primary/20 hover:bg-primary/10 transition-colors cursor-pointer"
-              title={`${comments.length} bình luận`}
-              onClick={(e) => { e.stopPropagation(); onEdit?.({ id, title, description, priority, storyPoints, assignee, tags, comments }); }}
-            >
-              <span className="material-symbols-outlined text-base">forum</span>
-              <span className="text-sm font-bold">{comments.length}</span>
-            </div>
-          )}
+          <div 
+            className="flex items-center gap-1 text-primary bg-primary/5 px-3 py-1 rounded-lg border border-primary/20 hover:bg-primary/10 transition-colors cursor-pointer"
+            title={`${comments.length} bình luận (bấm để xem & gửi bình luận)`}
+            onClick={(e) => { e.stopPropagation(); onEdit?.({ id, title, description, priority, storyPoints, assignee, tags, comments }); }}
+          >
+            <span className="material-symbols-outlined text-base">forum</span>
+            <span className="text-sm font-bold">{comments.length}</span>
+          </div>
         </div>
 
         <div className="relative" onClick={(e) => e.stopPropagation()}>

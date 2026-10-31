@@ -2,15 +2,28 @@
 import React, { useState, useEffect } from 'react';
 import CommentSection from './CommentSection';
 import AttachmentSection from './AttachmentSection'; 
+import { useAuth } from '../context/AuthContext';
+
 export default function CreateStoryModal({ 
   isOpen, 
   onClose, 
   onSubmit, 
   loading, 
   initialData,
-  projectId,
-  currentUser 
+  projectId: propProjectId,
+  currentUser: propCurrentUser,
+  userRole = 'MEMBER'
 }) {
+  const { user: authUser } = useAuth();
+  const currentUser = propCurrentUser || authUser || (() => {
+    try { return JSON.parse(localStorage.getItem('user')); } catch { return null; }
+  })();
+
+  const projectId = propProjectId || initialData?.projectId;
+  const isManagement = userRole === 'PO' || userRole === 'SM';
+  const isEdit = !!initialData;
+  const canEditStoryFields = !isEdit || isManagement; // Member chỉ được xem chi tiết và thảo luận khi sửa
+
   const [form, setForm] = useState({
     title: '',
     description: '',
@@ -53,6 +66,7 @@ export default function CreateStoryModal({
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    if (!canEditStoryFields) return;
     onSubmit({
       ...form,
       storyPoints: parseInt(form.storyPoints) || 0,
@@ -81,8 +95,6 @@ export default function CreateStoryModal({
     }
   };
 
-  const isEdit = !!initialData;
-
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-300">
       
@@ -96,16 +108,26 @@ export default function CreateStoryModal({
             </div>
             <div>
               <h3 className="text-lg font-bold text-on-surface">
-                {isEdit ? "Chỉnh sửa User Story" : "Tạo User Story mới"}
+                {isEdit 
+                  ? (isManagement ? "Chỉnh sửa User Story" : "Chi tiết & Thảo luận User Story") 
+                  : "Tạo User Story mới"}
               </h3>
+              {isEdit && !isManagement && (
+                <p className="text-[11px] text-on-surface-variant/70">
+                  Chế độ thảo luận (Chỉ PO / SM mới có quyền sửa nội dung story)
+                </p>
+              )}
             </div>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-surface-container-high rounded-full transition-colors">
+          <button 
+            type="button"
+            onClick={onClose} 
+            className="p-2 hover:bg-surface-container-high rounded-full transition-colors"
+          >
             <span className="material-symbols-outlined">close</span>
           </button>
         </div>
 
-       
         <div className="p-6 space-y-6 overflow-y-auto flex-1">
           <form onSubmit={handleSubmit} className="space-y-6">
 
@@ -114,8 +136,10 @@ export default function CreateStoryModal({
               <label className="text-sm font-bold text-on-surface-variant">Tiêu đề Story <span className="text-error">*</span></label>
               <input
                 required
-                autoFocus
-                className="w-full px-4 py-3 rounded-xl border border-outline-variant bg-surface-container-lowest focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                autoFocus={canEditStoryFields}
+                readOnly={!canEditStoryFields}
+                className={`w-full px-4 py-3 rounded-xl border border-outline-variant bg-surface-container-lowest focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none
+                  ${!canEditStoryFields ? 'bg-surface-container/50 cursor-not-allowed opacity-80' : ''}`}
                 placeholder="VD: Thiết kế giao diện Dashboard"
                 value={form.title}
                 onChange={e => setForm({ ...form, title: e.target.value })}
@@ -127,7 +151,9 @@ export default function CreateStoryModal({
             <div className="space-y-1.5">
               <label className="text-sm font-bold text-on-surface-variant">Mô tả chi tiết</label>
               <textarea
-                className="w-full px-4 py-3 rounded-xl border border-outline-variant bg-surface-container-lowest focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none resize-none min-h-[100px]"
+                readOnly={!canEditStoryFields}
+                className={`w-full px-4 py-3 rounded-xl border border-outline-variant bg-surface-container-lowest focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none resize-none min-h-[100px]
+                  ${!canEditStoryFields ? 'bg-surface-container/50 cursor-not-allowed opacity-80' : ''}`}
                 placeholder="Mô tả các tiêu chí chấp nhận..."
                 value={form.description}
                 onChange={e => setForm({ ...form, description: e.target.value })}
@@ -140,10 +166,11 @@ export default function CreateStoryModal({
               <div className="space-y-1.5">
                 <label className="text-sm font-bold text-on-surface-variant">Độ ưu tiên</label>
                 <select
-                  className="w-full px-4 py-3 rounded-xl border border-outline-variant bg-surface-container-lowest focus:ring-2 focus:ring-primary/20 outline-none cursor-pointer"
+                  disabled={loading || !canEditStoryFields}
+                  className={`w-full px-4 py-3 rounded-xl border border-outline-variant bg-surface-container-lowest focus:ring-2 focus:ring-primary/20 outline-none
+                    ${!canEditStoryFields ? 'bg-surface-container/50 cursor-not-allowed opacity-80' : 'cursor-pointer'}`}
                   value={form.priority}
                   onChange={e => setForm({ ...form, priority: e.target.value })}
-                  disabled={loading}
                 >
                   <option value="HIGH">HIGH</option>
                   <option value="MEDIUM">MEDIUM</option>
@@ -154,10 +181,11 @@ export default function CreateStoryModal({
               <div className="space-y-1.5">
                 <label className="text-sm font-bold text-on-surface-variant">Trạng thái</label>
                 <select
-                  className="w-full px-4 py-3 rounded-xl border border-outline-variant bg-surface-container-lowest focus:ring-2 focus:ring-primary/20 outline-none cursor-pointer"
+                  disabled={loading || !canEditStoryFields}
+                  className={`w-full px-4 py-3 rounded-xl border border-outline-variant bg-surface-container-lowest focus:ring-2 focus:ring-primary/20 outline-none
+                    ${!canEditStoryFields ? 'bg-surface-container/50 cursor-not-allowed opacity-80' : 'cursor-pointer'}`}
                   value={form.status}
                   onChange={e => setForm({ ...form, status: e.target.value })}
-                  disabled={loading}
                 >
                   <option value="BACKLOG">Backlog</option>
                   <option value="TODO">Todo</option>
@@ -171,7 +199,9 @@ export default function CreateStoryModal({
                 <label className="text-sm font-bold text-on-surface-variant">Story Points</label>
                 <input
                   type="number"
-                  className="w-full px-4 py-3 rounded-xl border border-outline-variant bg-surface-container-lowest focus:ring-2 focus:ring-primary/20 outline-none"
+                  readOnly={!canEditStoryFields}
+                  className={`w-full px-4 py-3 rounded-xl border border-outline-variant bg-surface-container-lowest focus:ring-2 focus:ring-primary/20 outline-none
+                    ${!canEditStoryFields ? 'bg-surface-container/50 cursor-not-allowed opacity-80' : ''}`}
                   placeholder="0, 1, 2, 3..."
                   value={form.storyPoints}
                   onChange={e => setForm({ ...form, storyPoints: e.target.value })}
@@ -180,32 +210,34 @@ export default function CreateStoryModal({
               </div>
             </div>
 
-            {/* Tags - Có cả nhập tay và chọn nhanh */}
+            {/* Tags */}
             <div className="space-y-2">
               <label className="text-sm font-bold text-on-surface-variant flex items-center gap-2">
                 <span className="material-symbols-outlined text-sm">label</span>
                 Nhãn / Tags
               </label>
 
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  className="flex-1 px-4 py-3 rounded-xl border border-outline-variant bg-surface-container-lowest focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
-                  placeholder="Nhập tag mới..."
-                  value={tagInput}
-                  onChange={(e) => setTagInput(e.target.value)}
-                  onKeyDown={handleTagKeyDown}
-                  disabled={loading}
-                />
-                <button
-                  type="button"
-                  onClick={addTag}
-                  className="px-6 py-3 bg-primary text-on-primary rounded-xl font-medium hover:bg-primary/90 disabled:opacity-50"
-                  disabled={!tagInput.trim() || loading}
-                >
-                  Thêm
-                </button>
-              </div>
+              {canEditStoryFields && (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    className="flex-1 px-4 py-3 rounded-xl border border-outline-variant bg-surface-container-lowest focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                    placeholder="Nhập tag mới..."
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    onKeyDown={handleTagKeyDown}
+                    disabled={loading}
+                  />
+                  <button
+                    type="button"
+                    onClick={addTag}
+                    className="px-6 py-3 bg-primary text-on-primary rounded-xl font-medium hover:bg-primary/90 disabled:opacity-50"
+                    disabled={!tagInput.trim() || loading}
+                  >
+                    Thêm
+                  </button>
+                </div>
+              )}
 
               {/* Danh sách tag đã chọn */}
               {form.tags.length > 0 && (
@@ -213,13 +245,15 @@ export default function CreateStoryModal({
                   {form.tags.map((tag, index) => (
                     <div key={index} className="flex items-center gap-1 bg-primary/10 text-primary px-3 py-1 rounded-xl text-sm">
                       #{tag}
-                      <button 
-                        type="button"
-                        onClick={() => removeTag(tag)} 
-                        className="ml-1 text-error hover:text-red-600 font-bold"
-                      >
-                        ✕
-                      </button>
+                      {canEditStoryFields && (
+                        <button 
+                          type="button"
+                          onClick={() => removeTag(tag)} 
+                          className="ml-1 text-error hover:text-red-600 font-bold"
+                        >
+                          ✕
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -227,34 +261,34 @@ export default function CreateStoryModal({
             </div>
 
             {/* Buttons */}
-            <div className="pt-6 flex gap-3">
+            <div className="pt-4 flex gap-3">
               <button
                 type="button"
                 onClick={onClose}
-                className="flex-1 py-3 rounded-xl font-medium border border-outline-variant hover:bg-surface-container-high"
+                className="flex-1 py-3 rounded-xl font-medium border border-outline-variant hover:bg-surface-container-high transition-colors"
                 disabled={loading}
               >
-                Hủy
+                Đóng
               </button>
-              <button
-                type="submit"
-                className={`flex-1 py-3 rounded-xl font-bold text-on-primary shadow transition-all ${
-                  isEdit ? "bg-tertiary" : "bg-primary"
-                }`}
-                disabled={loading || !form.title.trim()}
-              >
-                {loading ? 'Đang lưu...' : (isEdit ? 'Lưu thay đổi' : 'Tạo User Story')}
-              </button>
+              {canEditStoryFields && (
+                <button
+                  type="submit"
+                  className={`flex-1 py-3 rounded-xl font-bold text-on-primary shadow transition-all ${
+                    isEdit ? "bg-tertiary hover:bg-tertiary/90" : "bg-primary hover:bg-primary/90"
+                  }`}
+                  disabled={loading || !form.title.trim()}
+                >
+                  {loading ? 'Đang lưu...' : (isEdit ? 'Lưu thay đổi' : 'Tạo User Story')}
+                </button>
+              )}
             </div>
 
           </form>
 
-          {/* US-045: Bình luận & US-047: Đính kèm */}
-          {/* Đặt NGOÀI form để tránh lỗi nested form (CommentSection chứa form riêng) */}
-
+          {/* US-045: Bình luận Realtime & US-047: Đính kèm */}
           {isEdit && initialData?.id && (
-            <div className="space-y-6 pt-6 border-t border-outline-variant/20 mt-6">
-              {/* Phần Thảo luận */}
+            <div className="space-y-6 pt-4 border-t border-outline-variant/20 mt-4">
+              {/* Phần Thảo luận Realtime */}
               <CommentSection 
                 entityId={initialData.id} 
                 entityType="story" 

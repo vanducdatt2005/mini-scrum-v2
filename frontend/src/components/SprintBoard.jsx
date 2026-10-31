@@ -2,9 +2,21 @@
 import React from 'react';
 import KanbanColumn from './KanbanColumn';
 
-export default function SprintBoard({ sprint, stories = [], members = [], onUpdateStory, onEditStory, onUpdateTask, onAssignTask, onDeleteTask, onAddTask, userRole, currentUser }) {
-  // STORIES ARE THE SWIMLANES
-  // TASKS ARE THE ITEMS IN THE COLUMNS
+export default function SprintBoard({ 
+  sprint, 
+  stories = [], 
+  members = [], 
+  onUpdateStory, 
+  onEditStory, 
+  onUpdateTask, 
+  onAssignTask, 
+  onDeleteTask, 
+  onAddTask, 
+  userRole, 
+  currentUser,
+  projectId
+}) {
+  const resolvedProjectId = projectId || sprint?.projectId;
 
   return (
     <div className="space-y-8">
@@ -30,7 +42,7 @@ export default function SprintBoard({ sprint, stories = [], members = [], onUpda
             
             {/* Story Swimlane Side */}
             <div className="pr-4 md:border-r border-outline-variant/10 flex flex-col justify-center gap-3">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-[10px] font-mono font-bold bg-surface-container-high px-2 py-0.5 rounded text-on-surface-variant">
                   {story.id?.slice(-5)}
                 </span>
@@ -39,16 +51,16 @@ export default function SprintBoard({ sprint, stories = [], members = [], onUpda
                 }`}>
                   {story.priority}
                 </span>
-                {story.comments?.length > 0 && (
-                  <button 
-                    onClick={() => onEditStory && onEditStory(story)}
-                    className="flex items-center gap-1 text-[10px] font-bold text-primary bg-primary/5 px-2 py-0.5 rounded hover:bg-primary/10 transition-colors"
-                    title="Xem thảo luận"
-                  >
-                    <span className="material-symbols-outlined text-[12px]">forum</span>
-                    {story.comments.length}
-                  </button>
-                )}
+
+                {/* Nút Thảo luận luôn hiển thị kèm số lượng bình luận */}
+                <button 
+                  onClick={() => onEditStory && onEditStory(story)}
+                  className="flex items-center gap-1 text-[10px] font-bold text-primary bg-primary/5 hover:bg-primary/15 px-2 py-0.5 rounded-lg border border-primary/20 transition-all cursor-pointer"
+                  title="Xem và gửi bình luận thảo luận"
+                >
+                  <span className="material-symbols-outlined text-[13px]">forum</span>
+                  <span>{story.comments?.length || 0}</span>
+                </button>
               </div>
               
               <div 
@@ -84,6 +96,7 @@ export default function SprintBoard({ sprint, stories = [], members = [], onUpda
               onDeleteTask={onDeleteTask}
               userRole={userRole}
               currentUser={currentUser}
+              projectId={resolvedProjectId}
             />
             <KanbanColumn
               columnId={`taskcolumn-${story.id}-IN_PROGRESS`}
@@ -96,6 +109,7 @@ export default function SprintBoard({ sprint, stories = [], members = [], onUpda
               onDeleteTask={onDeleteTask}
               userRole={userRole}
               currentUser={currentUser}
+              projectId={resolvedProjectId}
             />
             <KanbanColumn
               columnId={`taskcolumn-${story.id}-DONE`}
@@ -108,6 +122,7 @@ export default function SprintBoard({ sprint, stories = [], members = [], onUpda
               onDeleteTask={onDeleteTask}
               userRole={userRole}
               currentUser={currentUser}
+              projectId={resolvedProjectId}
             />
           </div>
         ))}

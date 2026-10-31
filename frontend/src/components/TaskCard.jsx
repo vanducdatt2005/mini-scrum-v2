@@ -1,10 +1,10 @@
 //frontend/src/components/TaskCard.jsx
-import React from 'react';
+import React, { useState, useRef } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { useState, useRef } from 'react';
 import CommentSection from './CommentSection';
 import AttachmentSection from './AttachmentSection';
+import { useAuth } from '../context/AuthContext';
 
 export function TaskCard({ 
   id, 
@@ -16,12 +16,17 @@ export function TaskCard({
   dueDate,
   members = [], 
   userRole = 'MEMBER',
-  currentUser,
+  currentUser: propCurrentUser,
   onUpdate, 
   onDelete, 
   onAssign,
   projectId
 }) {
+  const { user: authUser } = useAuth();
+  const currentUser = propCurrentUser || authUser || (() => {
+    try { return JSON.parse(localStorage.getItem('user')); } catch { return null; }
+  })();
+
   const {
     attributes,
     listeners,
@@ -77,6 +82,7 @@ export function TaskCard({
           <button
             onClick={(e) => { e.stopPropagation(); onDelete(cleanId); }}
             className="opacity-0 group-hover:opacity-100 p-1 hover:bg-error/10 text-error rounded transition-opacity"
+            title="Xóa task"
           >
             <span className="material-symbols-outlined text-[14px]">delete</span>
           </button>
@@ -103,7 +109,6 @@ export function TaskCard({
                     dateInputRef.current.click();
                   }
                 } catch (err) {
-                  // Fallback for browsers that don't support showPicker or have security restrictions
                   dateInputRef.current.focus();
                   dateInputRef.current.click();
                 }
@@ -181,29 +186,36 @@ export function TaskCard({
           )}
         </div>
       </div>
-            {/* ==================== COMMENT SECTION - US-046 ==================== */}
-      <div className="mt-4 pt-4 border-t border-outline-variant/10">
+
+      {/* ==================== COMMENT SECTION - US-046 ==================== */}
+      <div className="mt-3 pt-3 border-t border-outline-variant/10">
         <button
+          type="button"
           onClick={(e) => {
             e.stopPropagation();
             setShowComments(!showComments);
           }}
-          className="flex w-full items-center justify-center gap-2 py-2 text-xs font-medium text-on-surface-variant hover:text-primary transition-colors rounded-xl hover:bg-surface-container"
+          className={`flex w-full items-center justify-center gap-1.5 py-1.5 px-3 text-xs font-semibold transition-all rounded-xl border
+            ${showComments 
+              ? 'bg-primary/10 text-primary border-primary/20 shadow-sm' 
+              : 'text-on-surface-variant hover:text-primary hover:bg-surface-container border-transparent'}`}
         >
-          <span className="material-symbols-outlined text-base">chat</span>
-          {showComments ? 'Ẩn bình luận' : 'Xem bình luận'}
+          <span className="material-symbols-outlined text-sm">
+            {showComments ? 'expand_less' : 'chat'}
+          </span>
+          <span>{showComments ? 'Ẩn bình luận' : 'Thảo luận & Bình luận'}</span>
         </button>
 
-       {showComments && (
-          <>
+        {showComments && (
+          <div className="animate-in fade-in duration-200">
             <CommentSection
               entityId={cleanId}
               entityType="task"
               projectId={projectId}
-              currentUser={currentUser || { id: "temp-id", fullName: "Test User" }}
+              currentUser={currentUser}
             />
             <AttachmentSection entityId={cleanId} entityType="task" />
-          </>
+          </div>
         )}
       </div>
     </div>

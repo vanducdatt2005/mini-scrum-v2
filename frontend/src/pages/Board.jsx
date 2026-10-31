@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import useSocket from "../hooks/useSocket";
+import useBoardReconciliation from "../hooks/useBoardReconciliation";
+import { sanitizeStoriesTree, deduplicateById } from "../utils/boardReconciliation";
 import MainLayout from "../components/MainLayout";
 import BoardTopBar from "../components/BoardTopBar";
 import KanbanColumn from "../components/KanbanColumn";
@@ -71,7 +73,7 @@ export default function BoardPage() {
       
       if (story && story.status !== newStatus) {
         // Optimistic UI Update
-        setStories(prev => prev.map(s => s.id === activeId ? { ...s, status: newStatus } : s));
+        setStories(prev => deduplicateById(prev.map(s => s.id === activeId ? { ...s, status: newStatus } : s)));
         
         try {
           await handleStatusUpdate(activeId, newStatus);
@@ -117,7 +119,8 @@ export default function BoardPage() {
                       .filter(s => s.status === 'PLANNED'));
 
       if (active) {
-        setStories(Array.isArray(storiesRes.data) ? storiesRes.data.filter(s => s.sprintId === active.id) : []);
+        const raw = Array.isArray(storiesRes.data) ? storiesRes.data.filter(s => s.sprintId === active.id) : [];
+        setStories(sanitizeStoriesTree(raw));
       } else {
         setStories([]);
       }
@@ -126,7 +129,12 @@ export default function BoardPage() {
     }
   };
 
-  useSocket(projectId, loadStories);
+  const { isSyncing, syncStatus, performReconciliation } = useBoardReconciliation({
+    projectId,
+    stories,
+    setStories,
+    onReloadFull: loadStories
+  });
 
   const handleStatusUpdate = async (storyId, newStatus) => {
     try {
@@ -231,6 +239,8 @@ export default function BoardPage() {
           onCompleteSprint={() => setIsCompleteSprintModalOpen(true)}
           userRole={userRole}
           hasActiveSprint={!!activeSprint}
+          isSyncing={isSyncing}
+          syncStatus={syncStatus}
         />
       }
       projectId={projectId}

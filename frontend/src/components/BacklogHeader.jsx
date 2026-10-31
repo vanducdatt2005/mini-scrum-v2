@@ -2,6 +2,7 @@ import { useSidebar } from "../context/SidebarContext";
 import { useNavigate } from "react-router-dom";
 import NotificationBell from "./NotificationBell";
 import ConnectionStatusBadge from "./ConnectionStatusBadge";
+import SyncIndicator from "./SyncIndicator";
 
 const contributors = [
   "https://lh3.googleusercontent.com/aida-public/AB6AXuBjKL2ISrsCNns8o1KNta57CO8CEJ1XMRzuYwPe10xl4AfhRqOjlJxHphiFOnwPBbK-OvCqI01ZKDhkijPG8inIYpO1TPB5rHjd-PeKpH3xQ4qiyak89AmFlBz30ROkbEuc3foEzlUNkh-cI1AyMCumklnzqfkeKb2l0reslMgqDEm4ascvUsL8_FY-zrtroFodbBellAKHFsZf9i3wabuYYLEiW4fxYAIK6pHsYAhRS5_Qk5WnE4GMxOPE5Cu8rStLmOUaXrK7CN8",
@@ -9,7 +10,7 @@ const contributors = [
   "https://lh3.googleusercontent.com/aida-public/AB6AXuDWUv8ag8Ox6wV7LQsCZTxFF7M6HZZckWo2lB5eRcc-oVRqQAH8sjtJfok4ucJKXF7KbqM2YsQY2ZUsY6e7SEsuOf5YHdBher7ZzL5u1tkubJeBgh_Pdrjaw1s2sCQZHJ8Rqq5UMLMzDe2TxvcKQinrid75GK_QGdmOoXV93LXse9D0m1YxL-7ZelfC1JUwFK6bu_yRFgs8I-q2yVKEehXQOgB8Z-K9URExl7dR6oWy__qW5GRfX3dcNkIyqPRLyEH2STRC1LHWYLc",
 ];
 
-export default function BacklogHeader({ contributorCount = 12, projectId, projectName }) {
+export default function BacklogHeader({ contributorCount = 12, projectId, projectName, isSyncing, syncStatus }) {
   const { toggle } = useSidebar();
   const navigate = useNavigate();
 
@@ -44,6 +45,9 @@ export default function BacklogHeader({ contributorCount = 12, projectId, projec
           </button>
         )}
 
+        <div className="flex-shrink-0">
+          <SyncIndicator isSyncing={isSyncing} syncStatus={syncStatus} />
+        </div>
         <div className="flex-shrink-0">
           <ConnectionStatusBadge />
         </div>

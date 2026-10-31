@@ -3,10 +3,11 @@ import { useSidebar } from "../context/SidebarContext";
 import { useNavigate } from "react-router-dom";
 import NotificationBell from "./NotificationBell";
 import ConnectionStatusBadge from "./ConnectionStatusBadge";
+import SyncIndicator from "./SyncIndicator";
 import { useAuth } from "../context/AuthContext";
 import { getAvatarUrl } from "../services/api";
 
-export default function BoardTopBar({ timeRemaining = "4 days 12 hours remaining", projectId, onCompleteSprint, userRole, hasActiveSprint }) {
+export default function BoardTopBar({ timeRemaining = "4 days 12 hours remaining", projectId, onCompleteSprint, userRole, hasActiveSprint, isSyncing, syncStatus }) {
   const { toggle } = useSidebar();
   const navigate = useNavigate();
   const [showMenu, setShowMenu] = useState(false);
@@ -50,6 +51,9 @@ export default function BoardTopBar({ timeRemaining = "4 days 12 hours remaining
           </button>
         )}
 
+        <div className="flex-shrink-0">
+          <SyncIndicator isSyncing={isSyncing} syncStatus={syncStatus} />
+        </div>
         <div className="flex-shrink-0">
           <ConnectionStatusBadge />
         </div>

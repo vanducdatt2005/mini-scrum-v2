@@ -21,6 +21,14 @@ export const registerUser = (data) => api.post('/register', data);
 export const loginUser = (data) => api.post('/login', data);
 export const refreshToken = (token) => api.post('/auth/refresh', { token });
 
+// US-059: INVITE CODES (Google Classroom Style)
+export const joinProjectByCode = (inviteCode) => api.post('/project/join-by-code', { inviteCode });
+export const regenerateInviteCode = (projectId) => api.post(`/project/${projectId}/regenerate-invite-code`);
+export const getProjectInviteCode = (projectId) => api.get(`/project/${projectId}/invite-code`);
+
+// US-063: BOARD RECONCILIATION & STATE SYNC
+export const getBoardState = (projectId) => api.get(`/project/${projectId}/board-state`);
+
 export const addMemberToProject = (projectId, data) =>
   api.post(`/project/${projectId}/members`, data);
 

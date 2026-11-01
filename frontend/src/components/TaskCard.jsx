@@ -5,6 +5,7 @@ import { CSS } from '@dnd-kit/utilities';
 import CommentSection from './CommentSection';
 import AttachmentSection from './AttachmentSection';
 import { useAuth } from '../context/AuthContext';
+import EditTaskModal from './EditTaskModal';
 
 export function TaskCard({ 
   id, 
@@ -14,6 +15,7 @@ export function TaskCard({
   assignee, 
   assigneeId, 
   dueDate,
+  version = 1,
   members = [], 
   userRole = 'MEMBER',
   currentUser: propCurrentUser,
@@ -36,6 +38,7 @@ export function TaskCard({
     isDragging,
   } = useSortable({ id });
   const [showComments, setShowComments] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const dateInputRef = useRef(null);
 
   const style = {
@@ -48,11 +51,11 @@ export function TaskCard({
 
   const handleAssigneeChange = (e) => {
     const newAssigneeId = e.target.value === 'unassigned' ? null : e.target.value;
-    onUpdate({ assigneeId: newAssigneeId });
+    onUpdate({ assigneeId: newAssigneeId, version: version ?? 1 });
   };
 
   const handleDateChange = (e) => {
-    onUpdate({ dueDate: e.target.value || null });
+    onUpdate({ dueDate: e.target.value || null, version: version ?? 1 });
   };
 
   const isOverdue = dueDate && new Date(dueDate) < new Date(new Date().setHours(0,0,0,0)) && status !== 'DONE';
@@ -75,18 +78,31 @@ export function TaskCard({
       </div>
 
       <div className="flex justify-between items-start gap-2 mb-1">
-        <h5 className="text-xs font-bold text-on-surface line-clamp-2 leading-tight">
+        <h5 
+          className="text-xs font-bold text-on-surface line-clamp-2 leading-tight cursor-pointer hover:text-primary transition-colors"
+          onClick={(e) => { e.stopPropagation(); setIsEditModalOpen(true); }}
+          title="Nhấp để chỉnh sửa task"
+        >
           {title}
         </h5>
-        {onDelete && (
+        <div className="flex items-center gap-0.5">
           <button
-            onClick={(e) => { e.stopPropagation(); onDelete(cleanId); }}
-            className="opacity-0 group-hover:opacity-100 p-1 hover:bg-error/10 text-error rounded transition-opacity"
-            title="Xóa task"
+            onClick={(e) => { e.stopPropagation(); setIsEditModalOpen(true); }}
+            className="opacity-0 group-hover:opacity-100 p-1 hover:bg-primary/10 text-primary rounded transition-opacity"
+            title="Chỉnh sửa task"
           >
-            <span className="material-symbols-outlined text-[14px]">delete</span>
+            <span className="material-symbols-outlined text-[14px]">edit</span>
           </button>
-        )}
+          {onDelete && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onDelete(cleanId); }}
+              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-error/10 text-error rounded transition-opacity"
+              title="Xóa task"
+            >
+              <span className="material-symbols-outlined text-[14px]">delete</span>
+            </button>
+          )}
+        </div>
       </div>
       
       {description && (
@@ -218,6 +234,25 @@ export function TaskCard({
           </div>
         )}
       </div>
+
+      <EditTaskModal
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        task={{
+          id: cleanId,
+          title,
+          description,
+          status,
+          assignee,
+          assigneeId,
+          dueDate,
+          version: version ?? 1
+        }}
+        members={members}
+        onSaveSuccess={(updated) => {
+          if (onUpdate) onUpdate(updated);
+        }}
+      />
     </div>
   );
 }

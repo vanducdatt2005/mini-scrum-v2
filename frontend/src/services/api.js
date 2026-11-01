@@ -54,7 +54,7 @@ export const reorderStories = (stories) => api.patch('/userstory/reorder', { sto
 // TASKS
 export const createStoryTask = (storyId, data) => api.post(`/userstory/${storyId}/tasks`, data);
 export const updateTask = (id, data) => api.patch(`/tasks/${id}`, data);
-export const assignTaskByEmail = (id, email) => api.patch(`/tasks/${id}/assign`, { email });
+export const assignTaskByEmail = (id, email, version) => api.patch(`/tasks/${id}/assign`, { email, version });
 export const deleteTask = (id) => api.delete(`/tasks/${id}`);
 export const getStoryTasks = (storyId) => api.get(`/userstory/${storyId}/tasks`);
 

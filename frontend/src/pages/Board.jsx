@@ -11,6 +11,8 @@ import FAB from "../components/FAB";
 import api, { getStoriesByProject, updateUserStory } from "../services/api";
 import CreateStoryModal from "../components/CreateStoryModal";
 import CompleteSprintModal from "../components/CompleteSprintModal";
+import toast from 'react-hot-toast';
+import useOptimisticUpdate from "../hooks/useOptimisticUpdate";
 
 import { 
   DndContext, 
@@ -35,6 +37,7 @@ export default function BoardPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const navigate = useNavigate();
   const { user: currentUser } = useAuth();
+  const { optimisticUpdate, invalidateBySocket } = useOptimisticUpdate(setStories, stories);
 
   // Cấu hình Sensors cho Drag & Drop
   const sensors = useSensors(
@@ -56,32 +59,24 @@ export default function BoardPage() {
     const activeId = active.id;
     const overId = over.id;
 
-    // Xác định status mục tiêu từ overId
     let newStatus = null;
     if (overId.startsWith('column-')) {
       newStatus = overId.replace('column-', '');
     } else {
-      // Nếu overId là ID của một Story Card khác, ta tìm xem Story đó đang ở cột nào
       const overStory = stories.find(s => s.id === overId);
-      if (overStory) {
-        newStatus = overStory.status;
-      }
+      if (overStory) newStatus = overStory.status;
     }
 
-    if (newStatus) {
-      const story = stories.find(s => s.id === activeId);
-      
-      if (story && story.status !== newStatus) {
-        // Optimistic UI Update
-        setStories(prev => deduplicateById(prev.map(s => s.id === activeId ? { ...s, status: newStatus } : s)));
-        
-        try {
-          await handleStatusUpdate(activeId, newStatus);
-        } catch (err) {
-          loadStories();
-        }
-      }
-    }
+    if (!newStatus) return;
+    const story = stories.find(s => s.id === activeId);
+    if (!story || story.status === newStatus) return;
+
+    // US-64: Optimistic Update with rollback
+    await optimisticUpdate({
+      itemId: activeId,
+      patchFn: prev => deduplicateById(prev.map(s => s.id === activeId ? { ...s, status: newStatus } : s)),
+      apiCall: () => updateUserStory(activeId, { status: newStatus }),
+    });
   };
 
   useEffect(() => {
@@ -133,16 +128,16 @@ export default function BoardPage() {
     projectId,
     stories,
     setStories,
-    onReloadFull: loadStories
+    onReloadFull: loadStories,
+    onSocketItemUpdate: invalidateBySocket,
   });
 
   const handleStatusUpdate = async (storyId, newStatus) => {
-    try {
-      await updateUserStory(storyId, { status: newStatus });
-      loadStories();
-    } catch (e) {
-      alert("Lỗi cập nhật trạng thái");
-    }
+    await optimisticUpdate({
+      itemId: storyId,
+      patchFn: prev => deduplicateById(prev.map(s => s.id === storyId ? { ...s, status: newStatus } : s)),
+      apiCall: () => updateUserStory(storyId, { status: newStatus }),
+    });
   };
 
   const handleEditStory = (story) => {
@@ -164,15 +159,24 @@ export default function BoardPage() {
     setIsSubmitting(true);
     try {
       if (editingStory) {
-        await api.patch(`/userstory/${editingStory.id}`, formData);
+        // US-64: Optimistic edit
+        const success = await optimisticUpdate({
+          itemId: editingStory.id,
+          patchFn: prev => prev.map(s => s.id === editingStory.id ? { ...s, ...formData } : s),
+          apiCall: () => api.patch(`/userstory/${editingStory.id}`, formData),
+        });
+        if (success) {
+          setIsModalOpen(false);
+          setEditingStory(null);
+        }
       } else {
         await api.post('/userstory', { ...formData, projectId, status: "TODO" });
+        await loadStories();
+        setIsModalOpen(false);
+        setEditingStory(null);
       }
-      await loadStories();
-      setIsModalOpen(false);
-      setEditingStory(null);
     } catch (e) {
-      window.alert(e.response?.data?.error || "Lỗi xử lý user story!");
+      toast.error(e.response?.data?.error || "Lỗi xử lý user story!");
     } finally {
       setIsSubmitting(false);
     }
@@ -190,12 +194,17 @@ export default function BoardPage() {
   };
 
   const handleAssignById = async (storyId, assigneeId) => {
-    try {
-      await updateUserStory(storyId, { assigneeId });
-      loadStories();
-    } catch (e) {
-      window.alert("Lỗi gán thành viên: " + (e.response?.data?.error || e.message));
-    }
+    const member = members.find(m => (m.user?.id || m.userId) === assigneeId);
+    // US-64: Optimistic assign
+    await optimisticUpdate({
+      itemId: storyId,
+      patchFn: prev => prev.map(s => s.id === storyId ? {
+        ...s,
+        assigneeId,
+        assignee: member?.user || s.assignee,
+      } : s),
+      apiCall: () => updateUserStory(storyId, { assigneeId }),
+    });
   };
 
   const prepareCards = (statusMatches) => {

@@ -18,7 +18,7 @@ import {
  * @param {Function} setStories - Hàm cập nhật state stories
  * @param {Function} onReloadFull - Callback reload toàn bộ dữ liệu phụ (sprints, members...)
  */
-export default function useBoardReconciliation({ projectId, stories, setStories, onReloadFull }) {
+export default function useBoardReconciliation({ projectId, stories, setStories, onReloadFull, onSocketItemUpdate }) {
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncAt, setLastSyncAt] = useState(Date.now());
   const [syncStatus, setSyncStatus] = useState('idle'); // 'idle' | 'syncing' | 'synced' | 'error'
@@ -205,6 +205,10 @@ export default function useBoardReconciliation({ projectId, stories, setStories,
 
       if (event.data && typeof setStories === 'function') {
         setStories(prev => upsertStoryInList(prev, event.data, event.action));
+        // US-64: Thông báo cho optimistic hook khi socket cập nhật item
+        if (event.data.id && typeof onSocketItemUpdate === 'function') {
+          onSocketItemUpdate(event.data.id);
+        }
       } else {
         if (typeof performReconciliationRef.current === 'function') {
           performReconciliationRef.current('socket-story-changed');
@@ -219,7 +223,7 @@ export default function useBoardReconciliation({ projectId, stories, setStories,
       socket.off('task:changed', handleTaskChanged);
       socket.off('userStory:changed', handleStoryChanged);
     };
-  }, [projectId, setStories]);
+  }, [projectId, setStories, onSocketItemUpdate]);
 
   // Expose ra window để dễ dàng kiểm thử trực tiếp bằng tay trên F12 Console (DoD)
   useEffect(() => {

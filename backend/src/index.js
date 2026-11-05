@@ -709,6 +709,15 @@ app.patch("/api/userstory/:id", authMiddleware, async (req, res) => {
         sprintId: req.body.sprintId !== undefined ? req.body.sprintId : undefined,
         backlogOrder: req.body.backlogOrder !== undefined ? req.body.backlogOrder : undefined,
       },
+      include: {
+        assignee: { select: { id: true, fullName: true, email: true, avatar: true } },
+        tasks: {
+          include: {
+            assignee: { select: { id: true, fullName: true, email: true, avatar: true } }
+          }
+        },
+        comments: { select: { id: true } }
+      }
     });
 
     // Nếu thay đổi status, lưu lại lịch sử
@@ -736,7 +745,10 @@ app.patch("/api/userstory/:id/assign", async (req, res) => {
     if (!user) return res.status(404).json({ error: "Không tìm thấy user với email này" });
     const updated = await prisma.userStory.update({
       where: { id: req.params.id },
-      data: { assigneeId: user.id }
+      data: { assigneeId: user.id },
+      include: {
+        assignee: { select: { id: true, fullName: true, email: true, avatar: true } }
+      }
     });
     res.json({ message: "Gán thành viên thành công", story: updated });
   } catch (err) {
@@ -1617,6 +1629,9 @@ app.post("/api/userstory/:storyId/tasks", authMiddleware, async (req, res) => {
         status: "TODO",
         assigneeId: assigneeId || null,
         dueDate: dueDate ? new Date(dueDate) : null,
+      },
+      include: {
+        assignee: { select: { id: true, fullName: true, email: true, avatar: true } }
       }
     });
     res.status(201).json(task);
@@ -1639,6 +1654,9 @@ app.patch("/api/tasks/:id", authMiddleware, async (req, res) => {
         assigneeId: assigneeId !== undefined ? assigneeId : undefined,
         storyId: storyId !== undefined ? storyId : undefined,
         dueDate: dueDate !== undefined ? (dueDate ? new Date(dueDate) : null) : undefined,
+      },
+      include: {
+        assignee: { select: { id: true, fullName: true, email: true, avatar: true } }
       }
     });
     res.json(updated);
@@ -1656,7 +1674,10 @@ app.patch("/api/tasks/:id/assign", authMiddleware, async (req, res) => {
 
     const updated = await prisma.task.update({
       where: { id: req.params.id },
-      data: { assigneeId: user.id }
+      data: { assigneeId: user.id },
+      include: {
+        assignee: { select: { id: true, fullName: true, email: true, avatar: true } }
+      }
     });
     res.json({ message: "Gán thành viên thành công", task: updated });
   } catch (err) {

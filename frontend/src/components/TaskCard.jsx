@@ -5,6 +5,7 @@ import { CSS } from '@dnd-kit/utilities';
 import CommentSection from './CommentSection';
 import AttachmentSection from './AttachmentSection';
 import { useAuth } from '../context/AuthContext';
+import { getAvatarUrl } from '../services/api';
 
 export function TaskCard({ 
   id, 
@@ -154,10 +155,18 @@ export function TaskCard({
         >
           {assignee ? (
             <div 
-              className="w-6 h-6 rounded-full bg-primary text-on-primary flex items-center justify-center text-[10px] font-bold shadow-sm border border-primary/20"
+              className="w-6 h-6 rounded-full overflow-hidden bg-primary text-on-primary flex items-center justify-center text-[10px] font-bold shadow-sm border border-primary/20"
               title={assignee.fullName || assignee.email}
             >
-              { (assignee.fullName || assignee.email || '?').charAt(0).toUpperCase() }
+              {assignee.avatar ? (
+                <img 
+                  src={getAvatarUrl(assignee.avatar)} 
+                  alt="Avatar" 
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                (assignee.fullName || assignee.email || '?').charAt(0).toUpperCase()
+              )}
             </div>
           ) : (
             <div 

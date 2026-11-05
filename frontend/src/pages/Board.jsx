@@ -23,7 +23,7 @@ import {
 } from '@dnd-kit/core';
 
 export default function BoardPage() {
-  const { projectId } = useParams();
+  const { projectId, taskId } = useParams();
   const [stories, setStories] = useState([]);
   const [activeSprint, setActiveSprint] = useState(null);
   const [plannedSprints, setPlannedSprints] = useState([]);
@@ -103,6 +103,23 @@ export default function BoardPage() {
     }
   }, [projectId]);
 
+  // Tự động focus/highlight Task khi navigate từ Notification (AC2, AC3)
+  useEffect(() => {
+    if (taskId) {
+      const timer = setTimeout(() => {
+        const el = document.getElementById(`task-${taskId}`) || document.getElementById(taskId);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.add('ring-4', 'ring-primary', 'transition-all');
+          setTimeout(() => {
+            el.classList.remove('ring-4', 'ring-primary');
+          }, 3500);
+        }
+      }, 600);
+      return () => clearTimeout(timer);
+    }
+  }, [taskId, stories]);
+
   const loadStories = async () => {
     try {
       const [storiesRes, sprintsRes, membersRes] = await Promise.all([
@@ -145,8 +162,8 @@ export default function BoardPage() {
     }
   };
 
-  const handleEditStory = (story) => {
-    setEditingStory(story);
+  const handleEditStory = (story, tab) => {
+    setEditingStory(tab ? { ...story, defaultTab: tab } : story);
     setIsModalOpen(true);
   };
 

@@ -217,34 +217,41 @@ function initSocket(server, prisma) {
       }
     });
 
-    // Room handlers cho Story & Task Comments (Realtime Discussion)
-    socket.on("joinStory", (storyId) => {
+    // Room handlers cho Story & Task Comments (Realtime Discussion - AC4)
+    const handleJoinStory = (storyId) => {
       if (storyId) {
         socket.join(`story_${storyId}`);
         console.log(`Socket ${socket.id} joined story room: story_${storyId}`);
       }
-    });
-
-    socket.on("leaveStory", (storyId) => {
+    };
+    const handleLeaveStory = (storyId) => {
       if (storyId) {
         socket.leave(`story_${storyId}`);
         console.log(`Socket ${socket.id} left story room: story_${storyId}`);
       }
-    });
-
-    socket.on("joinTask", (taskId) => {
+    };
+    const handleJoinTask = (taskId) => {
       if (taskId) {
         socket.join(`task_${taskId}`);
         console.log(`Socket ${socket.id} joined task room: task_${taskId}`);
       }
-    });
-
-    socket.on("leaveTask", (taskId) => {
+    };
+    const handleLeaveTask = (taskId) => {
       if (taskId) {
         socket.leave(`task_${taskId}`);
         console.log(`Socket ${socket.id} left task room: task_${taskId}`);
       }
-    });
+    };
+
+    socket.on("joinStory", handleJoinStory);
+    socket.on("JOIN_STORY_ROOM", handleJoinStory);
+    socket.on("leaveStory", handleLeaveStory);
+    socket.on("LEAVE_STORY_ROOM", handleLeaveStory);
+
+    socket.on("joinTask", handleJoinTask);
+    socket.on("JOIN_TASK_ROOM", handleJoinTask);
+    socket.on("leaveTask", handleLeaveTask);
+    socket.on("LEAVE_TASK_ROOM", handleLeaveTask);
 
     socket.on("disconnect", (reason) => {
       console.log(`Socket disconnected: ${socket.id}, reason: ${reason}`);
@@ -370,7 +377,7 @@ function initSocket(server, prisma) {
           }
 
           // --- US-029: In-app Notification (chỉ áp dụng cho Task và UserStory, không gửi thông báo rác cho Comment) ---
-          if (["create", "update", "delete"].includes(params.action) && params.model !== "Comment") {
+          if (["create", "update", "delete"].includes(params.action) && params.model === "UserStory") {
             const title = result?.title || "Một tác vụ";
             const type = params.model === "Task" ? "TASK_CHANGED" : "STORY_CHANGED";
             const actionText = params.action === "create" ? "được tạo mới" : params.action === "update" ? "đã được cập nhật" : "đã bị xóa";

@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import CommentSection from './CommentSection';
 import AttachmentSection from './AttachmentSection'; 
+import ActivityLog from './ActivityLog';
 import { useAuth } from '../context/AuthContext';
 
 export default function CreateStoryModal({ 
@@ -12,7 +13,8 @@ export default function CreateStoryModal({
   initialData,
   projectId: propProjectId,
   currentUser: propCurrentUser,
-  userRole = 'MEMBER'
+  userRole = 'MEMBER',
+  initialTab = 'comments'
 }) {
   const { user: authUser } = useAuth();
   const currentUser = propCurrentUser || authUser || (() => {
@@ -23,6 +25,8 @@ export default function CreateStoryModal({
   const isManagement = userRole === 'PO' || userRole === 'SM';
   const isEdit = !!initialData;
   const canEditStoryFields = !isEdit || isManagement; // Member chỉ được xem chi tiết và thảo luận khi sửa
+
+  const [activeTab, setActiveTab] = useState(initialTab);
 
   const [form, setForm] = useState({
     title: '',
@@ -60,7 +64,8 @@ export default function CreateStoryModal({
       });
     }
     setTagInput('');
-  }, [initialData, isOpen]);
+    setActiveTab(initialData?.defaultTab || initialTab || 'comments');
+  }, [initialData, initialTab, isOpen]);
 
   if (!isOpen) return null;
 
@@ -285,22 +290,80 @@ export default function CreateStoryModal({
 
           </form>
 
-          {/* US-045: Bình luận Realtime & US-047: Đính kèm */}
+          {/* US-045: Bình luận Realtime, US-047: Đính kèm & US-064: Lịch sử hoạt động (Activity Log) */}
           {isEdit && initialData?.id && (
-            <div className="space-y-6 pt-4 border-t border-outline-variant/20 mt-4">
-              {/* Phần Thảo luận Realtime */}
-              <CommentSection 
-                entityId={initialData.id} 
-                entityType="story" 
-                projectId={projectId}
-                currentUser={currentUser}
-              />
+            <div className="pt-5 border-t border-outline-variant/20 mt-5">
+              {/* Thanh Tab Chuyển đổi */}
+              <div className="flex items-center gap-2 border-b border-outline-variant/20 pb-3 mb-4 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('comments')}
+                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                    activeTab === 'comments'
+                      ? 'bg-primary text-white shadow-md shadow-primary/20'
+                      : 'text-on-surface-variant hover:bg-surface-container-high'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[16px]">forum</span>
+                  <span>Thảo luận ({initialData.comments?.length || 0})</span>
+                </button>
 
-              {/* Phần Đính kèm cho US-047 */}
-              <AttachmentSection 
-                entityId={initialData.id} 
-                entityType="userStory" 
-              />
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('attachments')}
+                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                    activeTab === 'attachments'
+                      ? 'bg-primary text-white shadow-md shadow-primary/20'
+                      : 'text-on-surface-variant hover:bg-surface-container-high'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[16px]">attach_file</span>
+                  <span>Đính kèm tệp</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('activity')}
+                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                    activeTab === 'activity'
+                      ? 'bg-primary text-white shadow-md shadow-primary/20'
+                      : 'text-on-surface-variant hover:bg-surface-container-high'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[16px]">manage_history</span>
+                  <span>Lịch sử thay đổi (Activity Log)</span>
+                </button>
+              </div>
+
+              {/* Nội dung từng Tab */}
+              {activeTab === 'comments' && (
+                <div className="animate-in fade-in duration-200">
+                  <CommentSection 
+                    entityId={initialData.id} 
+                    entityType="story" 
+                    projectId={projectId}
+                    currentUser={currentUser}
+                  />
+                </div>
+              )}
+
+              {activeTab === 'attachments' && (
+                <div className="animate-in fade-in duration-200">
+                  <AttachmentSection 
+                    entityId={initialData.id} 
+                    entityType="userStory" 
+                  />
+                </div>
+              )}
+
+              {activeTab === 'activity' && (
+                <div className="animate-in fade-in duration-200 bg-surface-container-lowest dark:bg-slate-900/60 p-4 rounded-2xl border border-outline-variant/20 shadow-sm">
+                  <ActivityLog 
+                    entityType="USER_STORY" 
+                    entityId={initialData.id} 
+                  />
+                </div>
+              )}
             </div>
           )}
           

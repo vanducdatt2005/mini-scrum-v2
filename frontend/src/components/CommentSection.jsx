@@ -4,7 +4,10 @@ import {
   createStoryComment, 
   getTaskComments, 
   createTaskComment,
+  updateComment,
   deleteComment,
+  uploadCommentAttachment,
+  getProjectMembers,
   getAvatarUrl
 } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -26,21 +29,70 @@ export default function CommentSection({
   const [newComment, setNewComment] = useState('');
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [deletingId, setDeletingId] = useState(null);
   const [error, setError] = useState(null);
+
+  // File attachments state
+  const [selectedFiles, setSelectedFiles] = useState([]);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+  const fileInputRef = useRef(null);
+
+  // Inline edit state
+  const [editingId, setEditingId] = useState(null);
+  const [editContent, setEditContent] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  // Delete modal state
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
+  // @Mention state
+  const [members, setMembers] = useState([]);
+  const [mentionQuery, setMentionQuery] = useState(null); // string query or null
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [mentionStartPos, setMentionStartPos] = useState(-1);
+  const textareaRef = useRef(null);
+  const mentionDropdownRef = useRef(null);
+
   const scrollRef = useRef(null);
 
-  const isStory = entityType === 'story';
+  const isStory = entityType.toLowerCase().includes('story');
   const getCommentsFn = isStory ? getStoryComments : getTaskComments;
   const createCommentFn = isStory ? createStoryComment : createTaskComment;
 
+  // 1. Tải danh sách thành viên dự án để gợi ý @mention
+  useEffect(() => {
+    let isMounted = true;
+    if (projectId) {
+      getProjectMembers(projectId)
+        .then((res) => {
+          if (!isMounted) return;
+          const memberList = (res.data || [])
+            .map((m) => m.user || m)
+            .filter((u) => u && u.id);
+          setMembers(memberList);
+        })
+        .catch((err) => {
+          console.warn("Không thể tải danh sách thành viên cho @mention:", err);
+        });
+    }
+    return () => { isMounted = false; };
+  }, [projectId]);
+
+  // 2. Tải danh sách bình luận
   const loadComments = useCallback(async (isSilent = false) => {
     if (!entityId) return;
     try {
       if (!isSilent) setLoading(true);
       setError(null);
       const res = await getCommentsFn(entityId);
-      setComments(Array.isArray(res.data) ? res.data : []);
+      const data = res?.data;
+      if (Array.isArray(data)) {
+        setComments(data);
+      } else if (data && Array.isArray(data.comments)) {
+        setComments(data.comments);
+      } else {
+        setComments([]);
+      }
     } catch (err) {
       console.error("Lỗi tải bình luận:", err);
       if (!isSilent) {
@@ -51,84 +103,71 @@ export default function CommentSection({
     }
   }, [entityId, getCommentsFn]);
 
-  // Tải danh sách comment ban đầu
   useEffect(() => {
     if (entityId) {
       loadComments();
     }
   }, [entityId, loadComments]);
 
-  // Kết nối Socket.io Realtime trực tiếp cho Story/Task
+  // 3. Socket Room và Real-time Listeners (AC4)
   useEffect(() => {
     if (!entityId) return;
 
     const socket = getSocket();
     if (!socket) return;
 
-    const roomName = isStory ? `story_${entityId}` : `task_${entityId}`;
-    const joinEvent = isStory ? 'joinStory' : 'joinTask';
-    const leaveEvent = isStory ? 'leaveStory' : 'leaveTask';
+    const joinEvent = isStory ? 'JOIN_STORY_ROOM' : 'JOIN_TASK_ROOM';
+    const leaveEvent = isStory ? 'LEAVE_STORY_ROOM' : 'LEAVE_TASK_ROOM';
+    const legacyJoin = isStory ? 'joinStory' : 'joinTask';
+    const legacyLeave = isStory ? 'leaveStory' : 'leaveTask';
 
-    // Tham gia phòng Socket riêng của Entity (Story hoặc Task)
-    if (socket.connected) {
+    // Tham gia phòng Socket riêng của Task / User Story
+    const doJoin = () => {
       socket.emit(joinEvent, entityId);
+      socket.emit(legacyJoin, entityId);
+      console.log(`📡 [Socket] Joined room for ${entityType} ${entityId}`);
+    };
+
+    if (socket.connected) {
+      doJoin();
     } else {
-      socket.once('connect', () => {
-        socket.emit(joinEvent, entityId);
-      });
+      socket.once('connect', doJoin);
     }
 
-    // Xử lý khi có bình luận mới được tạo realtime
-    const handleNewComment = (payload) => {
-      console.log('💬 [Realtime] comment:new received:', payload);
-      const targetId = payload.entityId || payload.comment?.userStoryId || payload.comment?.taskId;
-      
+    // Handler khi có comment mới
+    const handleCommentCreated = (payload) => {
+      const targetId = payload?.entityId || payload?.comment?.taskId || payload?.comment?.userStoryId;
       if (String(targetId) === String(entityId)) {
-        if (payload.action === 'create' && payload.comment) {
+        const commentObj = payload.comment || payload.data;
+        if (commentObj && commentObj.id) {
           setComments((prev) => {
-            // Tránh trùng lặp nếu người gửi là chính client này
-            if (prev.some((c) => c.id === payload.comment.id)) {
-              return prev;
-            }
-            return [...prev, payload.comment];
+            if (prev.some((c) => c.id === commentObj.id)) return prev;
+            return [...prev, commentObj];
           });
-        } else if (payload.action === 'delete') {
-          const delId = payload.commentId || payload.comment?.id;
-          if (delId) {
-            setComments((prev) => prev.filter((c) => c.id !== delId));
-          }
         } else {
           loadComments(true);
         }
       }
     };
 
-    // Xử lý khi có thay đổi chung từ project room
-    const handleCommentChanged = (payload) => {
-      const targetId = payload.entityId || payload.data?.userStoryId || payload.data?.taskId || payload.comment?.userStoryId || payload.comment?.taskId;
+    // Handler khi comment được cập nhật (Edit)
+    const handleCommentUpdated = (payload) => {
+      const targetId = payload?.entityId || payload?.comment?.taskId || payload?.comment?.userStoryId;
       if (String(targetId) === String(entityId)) {
-        console.log('💬 [Realtime] comment:changed for current entity, syncing...');
-        if (payload.action === 'create' && (payload.comment || payload.data?.content)) {
-          const newC = payload.comment || payload.data;
-          setComments((prev) => {
-            if (prev.some((c) => c.id === newC.id)) return prev;
-            return [...prev, newC];
-          });
-        } else if (payload.action === 'delete') {
-          const delId = payload.commentId || payload.entityId;
-          setComments((prev) => prev.filter((c) => c.id !== delId));
+        const commentObj = payload.comment || payload.data;
+        if (commentObj && commentObj.id) {
+          setComments((prev) => prev.map((c) => (c.id === commentObj.id ? { ...c, ...commentObj } : c)));
         } else {
           loadComments(true);
         }
       }
     };
 
-    // Xử lý khi bình luận bị xóa
+    // Handler khi comment bị xóa (Delete)
     const handleCommentDeleted = (payload) => {
-      console.log('🗑️ [Realtime] comment:deleted received:', payload);
-      const targetId = payload.entityId;
+      const targetId = payload?.entityId;
       if (String(targetId) === String(entityId)) {
-        const delId = payload.commentId;
+        const delId = payload.commentId || payload.id;
         if (delId) {
           setComments((prev) => prev.filter((c) => c.id !== delId));
         } else {
@@ -137,24 +176,33 @@ export default function CommentSection({
       }
     };
 
-    socket.on('comment:new', handleNewComment);
-    socket.on('comment:changed', handleCommentChanged);
+    // Đăng ký cả event chuẩn và legacy events
+    socket.on('COMMENT_CREATED', handleCommentCreated);
+    socket.on('comment:new', handleCommentCreated);
+
+    socket.on('COMMENT_UPDATED', handleCommentUpdated);
+    socket.on('comment:changed', handleCommentUpdated);
+
+    socket.on('COMMENT_DELETED', handleCommentDeleted);
     socket.on('comment:deleted', handleCommentDeleted);
 
     return () => {
       if (socket.connected) {
         socket.emit(leaveEvent, entityId);
+        socket.emit(legacyLeave, entityId);
       }
-      socket.off('comment:new', handleNewComment);
-      socket.off('comment:changed', handleCommentChanged);
+      socket.off('COMMENT_CREATED', handleCommentCreated);
+      socket.off('comment:new', handleCommentCreated);
+      socket.off('COMMENT_UPDATED', handleCommentUpdated);
+      socket.off('comment:changed', handleCommentUpdated);
+      socket.off('COMMENT_DELETED', handleCommentDeleted);
       socket.off('comment:deleted', handleCommentDeleted);
     };
-  }, [entityId, isStory, loadComments]);
+  }, [entityId, isStory, entityType, loadComments]);
 
-  // Phối hợp thêm với useSocket(projectId) nếu có projectId để dự phòng
+  // Phối hợp thêm useSocket fallback với Project Room
   useSocket(projectId, (data) => {
     if (data?.model === 'Comment' || data?.action?.includes('comment') || data?.entityType === entityType) {
-      console.log('💬 [useSocket-Fallback] Project room comment change detected:', data);
       const targetId = data?.entityId || data?.data?.userStoryId || data?.data?.taskId;
       if (String(targetId) === String(entityId)) {
         loadComments(true);
@@ -162,7 +210,7 @@ export default function CommentSection({
     }
   });
 
-  // Tự động cuộn xuống khi có tin nhắn/bình luận mới
+  // Tự động cuộn xuống dưới cùng khi có bình luận mới
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTo({
@@ -172,11 +220,151 @@ export default function CommentSection({
     }
   }, [comments]);
 
+  // ============================================================
+  // XỬ LÝ GÕ VÀ GỢI Ý @MENTION (AC1)
+  // ============================================================
+  const filteredMembers = React.useMemo(() => {
+    if (mentionQuery === null) return [];
+    const q = mentionQuery.toLowerCase();
+    return members.filter((m) => {
+      const name = (m.fullName || '').toLowerCase();
+      const email = (m.email || '').toLowerCase();
+      return name.includes(q) || email.includes(q);
+    });
+  }, [members, mentionQuery]);
+
+  const handleTextareaChange = (e) => {
+    const text = e.target.value;
+    const pos = e.target.selectionStart;
+    setNewComment(text);
+
+    // Tìm xem con trỏ có đang nằm ngay sau ký tự '@' không
+    const leftText = text.slice(0, pos);
+    const lastAtIndex = leftText.lastIndexOf('@');
+
+    if (lastAtIndex !== -1) {
+      // Đảm bảo @ đứng ở đầu chuỗi hoặc sau dấu cách/xuống dòng
+      const charBeforeAt = lastAtIndex > 0 ? leftText[lastAtIndex - 1] : ' ';
+      if (/[\s\n]/.test(charBeforeAt)) {
+        const query = leftText.slice(lastAtIndex + 1);
+        // Nếu không có khoảng trắng hoặc ký tự ngắt thì hiển thị popup
+        if (!/[\s\n]/.test(query) && query.length <= 30) {
+          setMentionQuery(query);
+          setMentionStartPos(lastAtIndex);
+          setMentionIndex(0);
+          return;
+        }
+      }
+    }
+
+    setMentionQuery(null);
+    setMentionStartPos(-1);
+  };
+
+  const insertMention = (member) => {
+    if (!member || mentionStartPos === -1) return;
+    const name = member.fullName || member.email || 'Thành viên';
+    const mentionToken = `@[${name}](${member.id}) `;
+
+    const before = newComment.slice(0, mentionStartPos);
+    const cursorPos = textareaRef.current ? textareaRef.current.selectionStart : mentionStartPos + (mentionQuery?.length || 0) + 1;
+    const after = newComment.slice(cursorPos);
+
+    const updatedText = before + mentionToken + after;
+    setNewComment(updatedText);
+    setMentionQuery(null);
+    setMentionStartPos(-1);
+
+    setTimeout(() => {
+      if (textareaRef.current) {
+        const newPos = before.length + mentionToken.length;
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(newPos, newPos);
+      }
+    }, 0);
+  };
+
+  // ============================================================
+  // XỬ LÝ PHÍM TẮT (Ctrl + Enter, Phím mũi tên khi Mention)
+  // ============================================================
+  const handleKeyDown = (e) => {
+    // Nếu đang mở menu gợi ý Mention
+    if (mentionQuery !== null && filteredMembers.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setMentionIndex((prev) => (prev + 1) % filteredMembers.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setMentionIndex((prev) => (prev - 1 + filteredMembers.length) % filteredMembers.length);
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        insertMention(filteredMembers[mentionIndex]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        setMentionQuery(null);
+        return;
+      }
+    }
+
+    // Phím tắt gửi: Ctrl + Enter hoặc Cmd + Enter (AC1)
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      handleSubmit();
+      return;
+    }
+
+    // Enter thường (không Shift) để gửi nhanh nếu không mở popup
+    if (e.key === 'Enter' && !e.shiftKey && mentionQuery === null) {
+      e.preventDefault();
+      handleSubmit();
+    }
+  };
+
+  // ============================================================
+  // XỬ LÝ FILE ĐÍNH KÈM
+  // ============================================================
+  const handleFileSelect = (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    const fileObjects = files.map((file) => {
+      const isImage = file.type.startsWith('image/');
+      return {
+        file,
+        previewUrl: isImage ? URL.createObjectURL(file) : null,
+        name: file.name,
+        size: file.size,
+        type: file.type
+      };
+    });
+
+    setSelectedFiles((prev) => [...prev, ...fileObjects].slice(0, 5)); // Tối đa 5 file
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const removeSelectedFile = (index) => {
+    setSelectedFiles((prev) => {
+      const removed = prev[index];
+      if (removed && removed.previewUrl) {
+        URL.revokeObjectURL(removed.previewUrl);
+      }
+      return prev.filter((_, i) => i !== index);
+    });
+  };
+
+  // ============================================================
+  // GỬI BÌNH LUẬN MỚI
+  // ============================================================
   const handleSubmit = async (e) => {
     if (e) e.preventDefault();
     const content = newComment.trim();
-    if (!content) return;
-    
+    if (!content && selectedFiles.length === 0) return;
+
     if (!currentUser?.id) {
       setError("Bạn cần đăng nhập để gửi bình luận");
       return;
@@ -185,10 +373,38 @@ export default function CommentSection({
     try {
       setSubmitting(true);
       setError(null);
-      const res = await createCommentFn(entityId, content);
+
+      // 1. Nếu có file đính kèm, upload lên trước
+      let attachmentIds = [];
+      if (selectedFiles.length > 0) {
+        setUploadingFiles(true);
+        const formData = new FormData();
+        selectedFiles.forEach((item) => formData.append('files', item.file));
+
+        const uploadRes = await uploadCommentAttachment(formData);
+        const uploadedData = uploadRes.data;
+        if (Array.isArray(uploadedData)) {
+          attachmentIds = uploadedData.map((a) => a.id);
+        } else if (uploadedData && uploadedData.id) {
+          attachmentIds = [uploadedData.id];
+        }
+      }
+
+      // 2. Tạo bình luận kèm attachmentIds
+      const res = await createCommentFn(entityId, {
+        content: content || "Đã gửi tệp đính kèm",
+        attachmentIds
+      });
+
+      // 3. Clear form state & thumbnails
       setNewComment('');
-      
-      // Cập nhật optimistic ngay lập tức nếu server trả về bản ghi hợp lệ
+      selectedFiles.forEach((item) => {
+        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      });
+      setSelectedFiles([]);
+      setMentionQuery(null);
+
+      // Optimistic update
       if (res?.data && res.data.id) {
         setComments((prev) => {
           if (prev.some((c) => c.id === res.data.id)) return prev;
@@ -201,36 +417,82 @@ export default function CommentSection({
       setError(msg);
     } finally {
       setSubmitting(false);
+      setUploadingFiles(false);
     }
   };
 
-  const handleDelete = async (commentId) => {
-    if (!window.confirm("Bạn có chắc chắn muốn xóa bình luận này?")) return;
+  // ============================================================
+  // CHỈNH SỬA BÌNH LUẬN (INLINE EDIT - AC3)
+  // ============================================================
+  const handleStartEdit = (comment) => {
+    setEditingId(comment.id);
+    setEditContent(comment.content);
+  };
 
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    setEditContent('');
+  };
+
+  const handleSaveEdit = async (commentId) => {
+    if (!editContent.trim()) {
+      alert("Nội dung bình luận không được để trống!");
+      return;
+    }
     try {
-      setDeletingId(commentId);
-      // Xóa optimistic trên UI trước
-      setComments((prev) => prev.filter((c) => c.id !== commentId));
-      await deleteComment(commentId);
+      setSavingEdit(true);
+      const res = await updateComment(commentId, { content: editContent.trim() });
+      const updated = res.data;
+
+      setComments((prev) => prev.map((c) => (c.id === commentId ? { ...c, ...updated } : c)));
+      setEditingId(null);
+      setEditContent('');
+    } catch (err) {
+      console.error("Lỗi lưu chỉnh sửa:", err);
+      alert(err.response?.data?.error || "Không thể cập nhật bình luận");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  // ============================================================
+  // XÓA BÌNH LUẬN (MODAL XÁC NHẬN - AC3)
+  // ============================================================
+  const handleConfirmDelete = async () => {
+    if (!deleteConfirmId) return;
+    try {
+      setDeleting(true);
+      const targetId = deleteConfirmId;
+      setComments((prev) => prev.filter((c) => c.id !== targetId));
+      await deleteComment(targetId);
+      setDeleteConfirmId(null);
     } catch (err) {
       console.error("Lỗi xóa bình luận:", err);
       alert(err.response?.data?.error || "Không thể xóa bình luận");
-      loadComments(true); // Tải lại nếu xóa thất bại
+      loadComments(true);
     } finally {
-      setDeletingId(null);
+      setDeleting(false);
+      setDeleteConfirmId(null);
     }
   };
 
+  // ============================================================
+  // HELPER FORMAT & PARSER
+  // ============================================================
   const formatTime = (dateStr) => {
     if (!dateStr) return '';
     const date = new Date(dateStr);
     const now = new Date();
     const diffMs = now - date;
     const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
 
     if (diffMins < 1) return 'Vừa xong';
     if (diffMins < 60) return `${diffMins} phút trước`;
-    
+    if (diffHours < 24) return `${diffHours} giờ trước`;
+    if (diffDays < 7) return `${diffDays} ngày trước`;
+
     return date.toLocaleString('vi-VN', { 
       hour: '2-digit', 
       minute: '2-digit',
@@ -240,39 +502,85 @@ export default function CommentSection({
     });
   };
 
+  const formatFileSize = (bytes) => {
+    if (!bytes || bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  };
+
+  // Render text có bóc tách và highlight @Mention
+  const renderCommentContent = (content = '') => {
+    if (!content) return null;
+    const mentionRegex = /@\[([^\]]+)\]\(([a-zA-Z0-9_\-]+)\)/g;
+    const parts = [];
+    let lastIndex = 0;
+    let match;
+
+    while ((match = mentionRegex.exec(content)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(content.slice(lastIndex, match.index));
+      }
+      const mentionName = match[1];
+      const mentionUserId = match[2];
+      const isMentionMe = currentUser?.id && String(mentionUserId) === String(currentUser.id);
+
+      parts.push(
+        <span 
+          key={`m-${match.index}`}
+          className={`inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded-lg text-[11px] font-bold transition-colors ${
+            isMentionMe 
+              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300 dark:border-amber-700/60' 
+              : 'bg-primary/10 text-primary border border-primary/20 dark:bg-primary/20'
+          }`}
+        >
+          @{mentionName}
+        </span>
+      );
+      lastIndex = mentionRegex.lastIndex;
+    }
+
+    if (lastIndex < content.length) {
+      parts.push(content.slice(lastIndex));
+    }
+
+    return parts;
+  };
+
   return (
     <div className="mt-4 border-t border-outline-variant/20 pt-4">
-      {/* Header Thảo luận với chỉ báo Realtime */}
+      {/* Header Thảo luận với Live Indicator */}
       <div className="flex items-center justify-between mb-3">
         <h4 className="text-xs font-bold uppercase tracking-wider text-on-surface flex items-center gap-2">
           <span className="material-symbols-outlined text-[18px] text-primary">forum</span>
-          <span>Thảo luận ({comments.length})</span>
+          <span>Bình luận & Thảo luận ({comments.length})</span>
         </h4>
 
         {/* Live indicator badge */}
-        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-success/10 text-success text-[10px] font-semibold border border-success/20">
-          <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse"></span>
-          <span>Trực tiếp</span>
+        <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 text-[10px] font-bold border border-emerald-300/40">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span>Realtime</span>
         </div>
       </div>
 
       {/* Danh sách bình luận */}
       <div 
         ref={scrollRef}
-        className="space-y-3 max-h-[300px] overflow-y-auto pr-1 mb-4 custom-scrollbar scroll-smooth"
+        className="space-y-3.5 max-h-[380px] overflow-y-auto pr-1 mb-4 custom-scrollbar scroll-smooth"
       >
         {loading && comments.length === 0 && (
-          <div className="flex items-center justify-center py-6 text-on-surface-variant/60 gap-2 text-xs">
+          <div className="flex items-center justify-center py-8 text-on-surface-variant/60 gap-2 text-xs">
             <span className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
             <span>Đang tải bình luận...</span>
           </div>
         )}
 
         {!loading && comments.length === 0 && (
-          <div className="p-6 text-center bg-surface-container-low/40 rounded-2xl border border-dashed border-outline-variant/20">
-            <span className="material-symbols-outlined text-2xl text-on-surface-variant/40 mb-1">chat_bubble_outline</span>
+          <div className="p-6 text-center bg-surface-container-low/40 dark:bg-slate-800/30 rounded-2xl border border-dashed border-outline-variant/30">
+            <span className="material-symbols-outlined text-3xl text-on-surface-variant/40 mb-1">chat_bubble_outline</span>
             <p className="text-xs text-on-surface-variant/70 italic">
-              Chưa có bình luận nào. Hãy bắt đầu cuộc trò chuyện!
+              Chưa có bình luận nào. Hãy bắt đầu trao đổi hoặc gắn thẻ đồng đội bằng ký tự @!
             </p>
           </div>
         )}
@@ -281,6 +589,8 @@ export default function CommentSection({
           const isOwnComment = currentUser?.id && (comment.userId === currentUser.id || comment.user?.id === currentUser.id);
           const authorName = comment.user?.fullName || comment.user?.email || 'Người dùng';
           const authorAvatar = comment.user?.avatar;
+          const isBeingEdited = editingId === comment.id;
+          const attachments = comment.attachments || [];
 
           return (
             <div 
@@ -288,7 +598,7 @@ export default function CommentSection({
               className="flex gap-2.5 group/item transition-all animate-in fade-in slide-in-from-bottom-1 duration-200"
             >
               {/* Avatar người dùng */}
-              <div className="w-7 h-7 rounded-full overflow-hidden bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold shrink-0 border border-primary/20 shadow-sm mt-0.5">
+              <div className="w-8 h-8 rounded-full overflow-hidden bg-primary/10 text-primary flex items-center justify-center text-[11px] font-bold shrink-0 border border-primary/20 shadow-sm mt-0.5">
                 {authorAvatar ? (
                   <img 
                     src={getAvatarUrl(authorAvatar)} 
@@ -301,90 +611,299 @@ export default function CommentSection({
               </div>
 
               {/* Hộp nội dung bình luận */}
-              <div className="flex-1 bg-surface-container-low/80 hover:bg-surface-container-low p-2.5 rounded-2xl rounded-tl-sm border border-outline-variant/15 transition-colors">
-                <div className="flex justify-between items-center mb-1 gap-2">
+              <div className="flex-1 bg-surface-container-low/90 dark:bg-slate-800/60 hover:bg-surface-container-low p-3 rounded-2xl rounded-tl-sm border border-outline-variant/20 transition-all shadow-sm">
+                <div className="flex justify-between items-center mb-1.5 gap-2">
                   <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-[11px] font-bold text-on-surface leading-none">
+                    <span className="text-[12px] font-bold text-on-surface">
                       {authorName}
                     </span>
                     {isOwnComment && (
-                      <span className="text-[9px] font-semibold bg-primary/10 text-primary px-1.5 py-0.2 rounded-full border border-primary/20">
+                      <span className="text-[9px] font-semibold bg-primary/10 text-primary px-1.5 py-0.5 rounded-full border border-primary/20">
                         Bạn
+                      </span>
+                    )}
+                    {comment.isEdited && (
+                      <span className="text-[10px] text-on-surface-variant/60 italic">
+                        (Đã chỉnh sửa)
                       </span>
                     )}
                   </div>
 
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <span className="text-[9px] text-on-surface-variant/60" title={comment.createdAt ? new Date(comment.createdAt).toLocaleString('vi-VN') : ''}>
+                    <span className="text-[10px] text-on-surface-variant/60" title={comment.createdAt ? new Date(comment.createdAt).toLocaleString('vi-VN') : ''}>
                       {formatTime(comment.createdAt)}
                     </span>
-                    
-                    {/* Nút xóa bình luận (cho tác giả) */}
-                    {isOwnComment && (
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(comment.id)}
-                        disabled={deletingId === comment.id}
-                        className="opacity-0 group-hover/item:opacity-100 p-0.5 text-on-surface-variant/40 hover:text-error hover:bg-error/10 rounded transition-all"
-                        title="Xóa bình luận"
-                      >
-                        <span className="material-symbols-outlined text-[13px] leading-none">delete</span>
-                      </button>
+
+                    {/* Actions: Sửa & Xóa (AC3) */}
+                    {!isBeingEdited && (
+                      <div className="opacity-0 group-hover/item:opacity-100 flex items-center gap-1 transition-opacity">
+                        {isOwnComment && (
+                          <button
+                            type="button"
+                            onClick={() => handleStartEdit(comment)}
+                            className="p-1 text-on-surface-variant/60 hover:text-primary hover:bg-primary/10 rounded transition-all"
+                            title="Chỉnh sửa bình luận"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">edit</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setDeleteConfirmId(comment.id)}
+                          className="p-1 text-on-surface-variant/60 hover:text-error hover:bg-error/10 rounded transition-all"
+                          title="Xóa bình luận"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">delete</span>
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>
 
-                <p className="text-[12px] text-on-surface leading-relaxed whitespace-pre-wrap break-words">
-                  {comment.content}
-                </p>
+                {/* Nội dung hoặc Chế độ Inline Edit */}
+                {isBeingEdited ? (
+                  <div className="mt-2 space-y-2">
+                    <textarea
+                      value={editContent}
+                      onChange={(e) => setEditContent(e.target.value)}
+                      className="w-full p-2.5 text-xs rounded-xl border border-primary bg-surface-container-lowest outline-none resize-none min-h-[60px]"
+                      rows={2}
+                      autoFocus
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={handleCancelEdit}
+                        disabled={savingEdit}
+                        className="px-2.5 py-1 text-xs rounded-lg hover:bg-surface-variant/40 font-semibold"
+                      >
+                        Hủy
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSaveEdit(comment.id)}
+                        disabled={savingEdit || !editContent.trim()}
+                        className="px-3 py-1 text-xs rounded-lg bg-primary text-on-primary font-bold hover:bg-primary/90 flex items-center gap-1 shadow-sm"
+                      >
+                        {savingEdit && <span className="w-3 h-3 border-2 border-on-primary border-t-transparent rounded-full animate-spin"></span>}
+                        <span>Lưu</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-[12px] text-on-surface leading-relaxed whitespace-pre-wrap break-words">
+                    {renderCommentContent(comment.content)}
+                  </div>
+                )}
+
+                {/* Danh sách tệp đính kèm trong bình luận */}
+                {attachments.length > 0 && (
+                  <div className="mt-2.5 pt-2 border-t border-outline-variant/15 flex flex-wrap gap-2">
+                    {attachments.map((att) => {
+                      const isImg = att.fileType && att.fileType.startsWith('image/');
+                      return (
+                        <div 
+                          key={att.id}
+                          className="group/att flex items-center gap-2 p-1.5 pr-2.5 bg-surface-container-lowest dark:bg-slate-900 rounded-xl border border-outline-variant/30 hover:border-primary/50 transition-all text-xs"
+                        >
+                          {isImg ? (
+                            <a href={att.fileUrl} target="_blank" rel="noreferrer" className="block w-8 h-8 rounded-lg overflow-hidden shrink-0 border border-outline-variant/20">
+                              <img src={att.fileUrl} alt={att.fileName} className="w-full h-full object-cover group-hover/att:scale-105 transition-transform" />
+                            </a>
+                          ) : (
+                            <span className="material-symbols-outlined text-[18px] text-primary">description</span>
+                          )}
+
+                          <a 
+                            href={att.fileUrl} 
+                            target="_blank" 
+                            rel="noreferrer" 
+                            download 
+                            className="flex flex-col truncate max-w-[160px] hover:text-primary transition-colors"
+                          >
+                            <span className="font-semibold truncate text-[11px]">{att.fileName}</span>
+                            <span className="text-[9px] text-on-surface-variant/60">{formatFileSize(att.fileSize)}</span>
+                          </a>
+
+                          <a 
+                            href={att.fileUrl} 
+                            target="_blank" 
+                            rel="noreferrer" 
+                            download
+                            className="p-1 hover:text-primary rounded" 
+                            title="Tải về"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">download</span>
+                          </a>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           );
         })}
       </div>
 
-      {/* Khung nhập bình luận mới */}
-      <div className="flex gap-2 items-end">
-        <div className="flex-1 relative">
-          <textarea
-            className="w-full px-3.5 py-2.5 rounded-xl border border-outline-variant/40 bg-surface-container-lowest focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none resize-none text-xs min-h-[44px] max-h-[100px] transition-all placeholder:text-on-surface-variant/40"
-            placeholder="Viết bình luận... (Enter để gửi, Shift+Enter xuống dòng)"
-            rows="1"
-            value={newComment}
-            onChange={(e) => setNewComment(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                handleSubmit(e);
-              }
-            }}
-            disabled={submitting}
-          />
+      {/* Xem trước tệp đính kèm chuẩn bị gửi */}
+      {selectedFiles.length > 0 && (
+        <div className="mb-2 p-2 bg-surface-container-low/60 rounded-xl border border-outline-variant/20 flex flex-wrap gap-2">
+          {selectedFiles.map((fileObj, idx) => (
+            <div 
+              key={idx} 
+              className="flex items-center gap-1.5 pl-1.5 pr-1 py-1 rounded-lg bg-surface-container-lowest border border-outline-variant/30 text-[11px]"
+            >
+              {fileObj.previewUrl ? (
+                <img src={fileObj.previewUrl} alt="preview" className="w-6 h-6 object-cover rounded" />
+              ) : (
+                <span className="material-symbols-outlined text-[16px] text-primary">attach_file</span>
+              )}
+              <span className="max-w-[120px] truncate font-medium">{fileObj.name}</span>
+              <button
+                type="button"
+                onClick={() => removeSelectedFile(idx)}
+                className="p-0.5 hover:text-error rounded"
+                title="Bỏ tệp"
+              >
+                <span className="material-symbols-outlined text-[14px]">close</span>
+              </button>
+            </div>
+          ))}
         </div>
+      )}
 
-        <button
-          type="button"
-          onClick={handleSubmit}
-          disabled={submitting || !newComment.trim()}
-          className="h-[44px] px-3.5 bg-primary text-on-primary rounded-xl flex items-center justify-center gap-1.5 shadow-md shadow-primary/20 hover:bg-primary/90 active:scale-95 transition-all disabled:opacity-50 disabled:shadow-none shrink-0"
-          title="Gửi bình luận"
-        >
-          {submitting ? (
-            <span className="w-4 h-4 border-2 border-on-primary border-t-transparent rounded-full animate-spin"></span>
-          ) : (
-            <>
-              <span className="material-symbols-outlined text-[18px]">send</span>
-              <span className="text-xs font-bold hidden sm:inline">Gửi</span>
-            </>
-          )}
-        </button>
+      {/* Khung nhập bình luận mới & Popup @Mention */}
+      <div className="relative">
+        {/* Dropdown Gợi ý @Mention (AC1) */}
+        {mentionQuery !== null && filteredMembers.length > 0 && (
+          <div 
+            ref={mentionDropdownRef}
+            className="absolute bottom-full left-0 mb-2 w-64 max-h-52 overflow-y-auto bg-surface-container-lowest dark:bg-slate-900 rounded-2xl shadow-xl border border-outline-variant/30 py-1 z-50 animate-in fade-in slide-in-from-bottom-2 duration-150"
+          >
+            <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-on-surface-variant/60 border-b border-outline-variant/20">
+              Nhắc tên thành viên
+            </div>
+            {filteredMembers.map((member, index) => {
+              const isSelected = index === mentionIndex;
+              const name = member.fullName || member.email || 'Thành viên';
+              return (
+                <div
+                  key={member.id}
+                  onClick={() => insertMention(member)}
+                  className={`flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors ${
+                    isSelected ? 'bg-primary/10 text-primary font-bold' : 'hover:bg-surface-variant/40 text-on-surface'
+                  }`}
+                >
+                  <div className="w-6 h-6 rounded-full overflow-hidden bg-primary/20 text-primary flex items-center justify-center text-[10px] font-bold shrink-0">
+                    {member.avatar ? (
+                      <img src={getAvatarUrl(member.avatar)} alt={name} className="w-full h-full object-cover" />
+                    ) : (
+                      name.charAt(0).toUpperCase()
+                    )}
+                  </div>
+                  <div className="truncate text-xs">
+                    <p className="truncate leading-tight">{name}</p>
+                    {member.email && <p className="text-[10px] text-on-surface-variant/60 truncate">{member.email}</p>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="flex gap-2 items-end">
+          {/* Nút đính kèm tệp */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            onChange={handleFileSelect}
+            className="hidden"
+            accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.zip"
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="h-[44px] w-[44px] rounded-xl border border-outline-variant/40 bg-surface-container-lowest hover:bg-surface-container-low flex items-center justify-center text-on-surface-variant/70 hover:text-primary transition-all shrink-0"
+            title="Đính kèm tệp / hình ảnh"
+          >
+            <span className="material-symbols-outlined text-[20px]">attach_file</span>
+          </button>
+
+          {/* Textarea nhập nội dung */}
+          <div className="flex-1 relative">
+            <textarea
+              ref={textareaRef}
+              className="w-full px-3.5 py-2.5 rounded-xl border border-outline-variant/40 bg-surface-container-lowest focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none resize-none text-xs min-h-[44px] max-h-[110px] transition-all placeholder:text-on-surface-variant/40 leading-relaxed"
+              placeholder="Nhập bình luận... (Gõ @ để nhắc tên đồng đội, Ctrl+Enter để gửi)"
+              rows="1"
+              value={newComment}
+              onChange={handleTextareaChange}
+              onKeyDown={handleKeyDown}
+              disabled={submitting}
+            />
+          </div>
+
+          {/* Nút gửi */}
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={submitting || (!newComment.trim() && selectedFiles.length === 0)}
+            className="h-[44px] px-4 bg-primary text-on-primary rounded-xl flex items-center justify-center gap-1.5 shadow-md shadow-primary/20 hover:bg-primary/90 active:scale-95 transition-all disabled:opacity-50 disabled:shadow-none shrink-0"
+            title="Gửi bình luận (Ctrl + Enter)"
+          >
+            {submitting ? (
+              <span className="w-4 h-4 border-2 border-on-primary border-t-transparent rounded-full animate-spin"></span>
+            ) : (
+              <>
+                <span className="material-symbols-outlined text-[18px]">send</span>
+                <span className="text-xs font-bold hidden sm:inline">Gửi</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {error && (
-        <p className="mt-2 text-[11px] text-error flex items-center gap-1">
+        <p className="mt-2 text-[11px] text-error flex items-center gap-1 animate-in fade-in">
           <span className="material-symbols-outlined text-[14px]">error</span>
           <span>{error}</span>
         </p>
+      )}
+
+      {/* Modal Xác nhận Xóa Bình luận (AC3) */}
+      {deleteConfirmId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="bg-surface-container-lowest dark:bg-slate-900 p-5 rounded-3xl max-w-sm w-full shadow-2xl border border-outline-variant/30 space-y-4">
+            <div className="flex items-center gap-3 text-error">
+              <span className="material-symbols-outlined text-2xl">warning</span>
+              <h3 className="font-bold text-base text-on-surface">Xóa bình luận?</h3>
+            </div>
+            <p className="text-xs text-on-surface-variant leading-relaxed">
+              Bạn có chắc chắn muốn xóa bình luận này không? Hành động này không thể hoàn tác và các tệp đính kèm cũng sẽ bị xóa.
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmId(null)}
+                disabled={deleting}
+                className="px-3.5 py-2 text-xs rounded-xl font-semibold hover:bg-surface-variant/40 transition-colors"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                disabled={deleting}
+                className="px-4 py-2 text-xs rounded-xl font-bold bg-error text-on-error hover:bg-error/90 transition-all flex items-center gap-1.5 shadow-md shadow-error/20"
+              >
+                {deleting && <span className="w-3 h-3 border-2 border-on-error border-t-transparent rounded-full animate-spin"></span>}
+                <span>Xác nhận xóa</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -58,13 +58,28 @@ export const assignTaskByEmail = (id, email) => api.patch(`/tasks/${id}/assign`,
 export const deleteTask = (id) => api.delete(`/tasks/${id}`);
 export const getStoryTasks = (storyId) => api.get(`/userstory/${storyId}/tasks`);
 
-// COMMENTS
-export const getStoryComments = (storyId) => api.get(`/userstory/${storyId}/comments?t=${Date.now()}`);
-export const createStoryComment = (storyId, content) => api.post(`/userstory/${storyId}/comments`, { content });
+// COMMENTS & MENTIONS
+export const getStoryComments = (storyId, params) => api.get(`/userstory/${storyId}/comments`, { params: { t: Date.now(), ...params } });
+export const createStoryComment = (storyId, data) => {
+  const payload = typeof data === 'string' ? { content: data } : data;
+  return api.post(`/userstory/${storyId}/comments`, payload);
+};
 // TASK COMMENTS (US-046)
-export const getTaskComments = (taskId) => api.get(`/tasks/${taskId}/comments?t=${Date.now()}`);
-export const createTaskComment = (taskId, content) => api.post(`/tasks/${taskId}/comments`, { content });
+export const getTaskComments = (taskId, params) => api.get(`/tasks/${taskId}/comments`, { params: { t: Date.now(), ...params } });
+export const createTaskComment = (taskId, data) => {
+  const payload = typeof data === 'string' ? { content: data } : data;
+  return api.post(`/tasks/${taskId}/comments`, payload);
+};
+export const updateComment = (commentId, data) => {
+  const payload = typeof data === 'string' ? { content: data } : data;
+  return api.patch(`/comments/${commentId}`, payload);
+};
 export const deleteComment = (commentId) => api.delete(`/comments/${commentId}`);
+export const uploadCommentAttachment = (formData) => {
+  return api.post('/comments/upload-attachment', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  });
+};
 
 // LỜI MỜI
 export const getInvitations = () => api.get('/invitations');
@@ -79,7 +94,6 @@ export const uploadAttachment = (formData) => {
 export const getAttachments = (entityType, entityId) => {
   return api.get(`/attachments?${entityType}Id=${entityId}`);
 };
-// Thêm hàm này vào api.js
 export const deleteAttachment = (id) => {
   return api.delete(`/attachments/${id}`);
 };
@@ -98,6 +112,10 @@ export const saveSprintRetrospective = (sprintId, data) => api.put(`/sprints/${s
 // NOTIFICATIONS
 export const getNotifications = () => api.get('/notifications');
 export const markNotificationAsRead = (id) => api.patch(`/notifications/${id}/read`);
+export const markAllNotificationsAsRead = () => api.patch('/notifications/read-all');
+
+// ACTIVITY LOGS / AUDIT TRAIL (Read-only)
+export const getActivities = (params) => api.get('/activities', { params });
 
 // USER SETTINGS
 export const getUserProfile = () => api.get('/user/profile');

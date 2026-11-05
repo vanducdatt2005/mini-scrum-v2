@@ -24,6 +24,7 @@ model User {
   notificationsReceived Notification[] @relation("ReceivedNotifications")
   notificationsSent     Notification[] @relation("SentNotifications")
   contributions   MemberContribution[] // Đóng góp trong các Sprint
+  activityLogs    ActivityLog[]        @relation("ActorActivityLogs")
 }
 
 model Project {
@@ -37,6 +38,7 @@ model Project {
   userStories UserStory[]
   sprints     Sprint[]
   standups    DailyStandup[]
+  notifications Notification[]
 }
 
 model ProjectMember {
@@ -113,6 +115,7 @@ model Task {
   updatedAt   DateTime  @updatedAt
   comments    Comment[]
   attachments Attachment[]
+  notifications Notification[]
 }
 
 model DailyStandup {
@@ -130,21 +133,28 @@ model DailyStandup {
 }
 
 model Comment {
-  id          String    @id @default(cuid())
-  content     String
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id               String      @id @default(cuid())
+  content          String
+  entityType       EntityType? @map("entity_type")
+  entityId         String?     @map("entity_id")
+  mentionedUserIds String[]    @default([]) @map("mentioned_user_ids")
+  isEdited         Boolean     @default(false) @map("is_edited")
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
 
   // Hỗ trợ cả UserStory lẫn Task (giữ nguyên dữ liệu cũ)
-  userStoryId String?
-  userStory   UserStory? @relation(fields: [userStoryId], references: [id], onDelete: Cascade)
+  userStoryId      String?
+  userStory        UserStory?  @relation(fields: [userStoryId], references: [id], onDelete: Cascade)
 
-  taskId      String?
-  task        Task?      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskId           String?
+  task             Task?       @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
-  userId      String
-  user        User       @relation(fields: [userId], references: [id])
+  userId           String
+  user             User        @relation(fields: [userId], references: [id])
 
+  attachments      Attachment[]
+
+  @@index([entityType, entityId, createdAt(sort: Desc)])
   @@map("comments")
 }
 model Attachment {
@@ -161,16 +171,23 @@ model Attachment {
   taskId      String?
   task        Task?      @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
+  commentId   String?    @map("comment_id")
+  comment     Comment?   @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
   userId      String
   user        User       @relation(fields: [userId], references: [id])
+
+  @@index([commentId])
 }
 
 model Notification {
   id          String   @id @default(cuid())
-  userId      String
-  senderId    String?
+  userId      String   // recipient_id (người nhận thông báo)
+  senderId    String?  // sender_id (người giao task)
+  taskId      String?  // task_id
+  projectId   String?  // project_id
   content     String
-  type        String   @default("SYSTEM") // SYSTEM, KICKED, TASK_CHANGED, v.v..
+  type        String   @default("TASK_ASSIGNED") // TASK_ASSIGNED, SYSTEM, KICKED, TASK_CHANGED, v.v..
   taskTitle   String?
   link        String?
   isRead      Boolean  @default(false)
@@ -178,6 +195,10 @@ model Notification {
   
   user        User     @relation("ReceivedNotifications", fields: [userId], references: [id], onDelete: Cascade)
   sender      User?    @relation("SentNotifications", fields: [senderId], references: [id], onDelete: SetNull)
+  task        Task?    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
 }
 
 // ============================================================
@@ -212,13 +233,47 @@ model MemberContribution {
   storiesCompleted Int           // Số User Story hoàn thành (status=DONE)
   storyPoints      Int           // Tổng SP của stories được assign và DONE
   hoursWorked      Int           // Tổng giờ làm việc (thực tế hoặc ước tính)
-  // JSON string chứa chỉ số đặc trưng theo vai trò:
-  // Tester: {"testCases": 50, "bugsFound": 12}
-  // Designer: {"screens": 10, "components": 5}
-  // Dev: {"commits": 30} (tương lai)
   specialMetric    String?       @default("{}")
   contributionPct  Float         // % đóng góp cuối cùng (tổng = 100%)
   createdAt        DateTime      @default(now())
 
   @@unique([summaryId, userId]) // Mỗi thành viên chỉ có 1 entry / Sprint
+}
+
+// ============================================================
+// MÔ-ĐUN AUDIT TRAIL / ACTIVITY LOGS (Immutable History)
+// ============================================================
+
+enum EntityType {
+  TASK
+  USER_STORY
+}
+
+enum ActionType {
+  CREATED
+  UPDATED_STATUS
+  UPDATED_ASSIGNEE
+  UPDATED_TITLE
+  UPDATED_DESCRIPTION
+  UPDATED_PRIORITY
+  ATTACHMENT_ADDED
+  ATTACHMENT_REMOVED
+  COMMENT_ADDED
+  COMMENT_UPDATED
+  COMMENT_DELETED
+}
+
+model ActivityLog {
+  id             String      @id @default(cuid())
+  entityType     EntityType  @map("entity_type")
+  entityId       String      @map("entity_id")
+  actorId        String?     @map("actor_id")
+  actionType     ActionType  @map("action_type")
+  changesPayload Json?       @map("changes_payload")
+  createdAt      DateTime    @default(now()) @map("created_at")
+
+  actor          User?       @relation("ActorActivityLogs", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId, createdAt(sort: Desc)])
+  @@map("activity_logs")
 }

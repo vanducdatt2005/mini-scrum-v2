@@ -34,6 +34,7 @@ function App() {
             <Route path="/create-project" element={<CreateProject />} />
             <Route path="/projects/:projectId/backlog" element={<Backlog />} />
             <Route path="/projects/:projectId/board" element={<BoardPage />} />
+            <Route path="/projects/:projectId/tasks/:taskId" element={<BoardPage />} />
             <Route path="/projects/:projectId/members" element={<ManageMembers />} />
             <Route path="/projects/:projectId/standup" element={<StandupPage />} />
             <Route path="/projects/:projectId/reports" element={<Reports />} />

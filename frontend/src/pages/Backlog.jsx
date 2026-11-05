@@ -422,8 +422,8 @@ export default function Backlog() {
     }
   };
 
-  const handleEditStory = (story) => {
-    setEditingStory(story);
+  const handleEditStory = (story, tab) => {
+    setEditingStory(tab ? { ...story, defaultTab: tab } : story);
     setIsModalOpen(true);
   };
 

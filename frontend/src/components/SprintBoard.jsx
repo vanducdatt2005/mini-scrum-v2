@@ -54,12 +54,22 @@ export default function SprintBoard({
 
                 {/* Nút Thảo luận luôn hiển thị kèm số lượng bình luận */}
                 <button 
-                  onClick={() => onEditStory && onEditStory(story)}
+                  onClick={() => onEditStory && onEditStory(story, 'comments')}
                   className="flex items-center gap-1 text-[10px] font-bold text-primary bg-primary/5 hover:bg-primary/15 px-2 py-0.5 rounded-lg border border-primary/20 transition-all cursor-pointer"
                   title="Xem và gửi bình luận thảo luận"
                 >
                   <span className="material-symbols-outlined text-[13px]">forum</span>
                   <span>{story.comments?.length || 0}</span>
+                </button>
+
+                {/* Nút Lịch sử hoạt động (Activity Log) */}
+                <button 
+                  onClick={() => onEditStory && onEditStory(story, 'activity')}
+                  className="flex items-center gap-1 text-[10px] font-bold text-on-surface-variant hover:text-primary bg-surface-container hover:bg-surface-container-high px-2 py-0.5 rounded-lg border border-outline-variant/30 hover:border-primary/40 transition-all cursor-pointer"
+                  title="Xem lịch sử thay đổi (Activity Log)"
+                >
+                  <span className="material-symbols-outlined text-[13px]">manage_history</span>
+                  <span>Lịch sử</span>
                 </button>
               </div>
               

@@ -120,10 +120,20 @@ export default function UserStoryCard({
               <div 
                 className="flex items-center gap-1 text-primary bg-primary/5 px-2 py-0.5 rounded-lg border border-primary/20 hover:bg-primary/10 transition-colors cursor-pointer"
                 title={`${comments.length} bình luận (bấm để xem & gửi bình luận)`}
-                onClick={(e) => { e.stopPropagation(); onEdit?.({ id, title, description, priority, storyPoints, assignee, tags, comments }); }}
+                onClick={(e) => { e.stopPropagation(); onEdit?.({ id, title, description, priority, storyPoints, assignee, tags, comments, defaultTab: 'comments' }); }}
               >
                 <span className="material-symbols-outlined text-[14px]">forum</span>
                 <span className="text-[10px] font-bold">{comments.length}</span>
+              </div>
+
+              {/* Lịch sử hoạt động (Activity Log) */}
+              <div 
+                className="flex items-center gap-1 text-on-surface-variant/80 bg-surface-container-high hover:bg-surface-container-highest px-2 py-0.5 rounded-lg border border-outline-variant/30 hover:text-primary hover:border-primary/40 transition-colors cursor-pointer"
+                title="Lịch sử hoạt động (Activity Log)"
+                onClick={(e) => { e.stopPropagation(); onEdit?.({ id, title, description, priority, storyPoints, assignee, tags, comments, defaultTab: 'activity' }); }}
+              >
+                <span className="material-symbols-outlined text-[14px]">manage_history</span>
+                <span className="text-[10px] font-bold hidden sm:inline">Lịch sử</span>
               </div>
 
               {/* Actions */}
@@ -351,10 +361,20 @@ export default function UserStoryCard({
           <div 
             className="flex items-center gap-1 text-primary bg-primary/5 px-3 py-1 rounded-lg border border-primary/20 hover:bg-primary/10 transition-colors cursor-pointer"
             title={`${comments.length} bình luận (bấm để xem & gửi bình luận)`}
-            onClick={(e) => { e.stopPropagation(); onEdit?.({ id, title, description, priority, storyPoints, assignee, tags, comments }); }}
+            onClick={(e) => { e.stopPropagation(); onEdit?.({ id, title, description, priority, storyPoints, assignee, tags, comments, defaultTab: 'comments' }); }}
           >
             <span className="material-symbols-outlined text-base">forum</span>
             <span className="text-sm font-bold">{comments.length}</span>
+          </div>
+
+          {/* Lịch sử hoạt động (Activity Log) */}
+          <div 
+            className="flex items-center gap-1 text-on-surface-variant hover:text-primary bg-surface-container hover:bg-surface-container-high px-3 py-1 rounded-lg border border-outline-variant/30 hover:border-primary/40 transition-colors cursor-pointer"
+            title="Lịch sử thay đổi (Activity Log)"
+            onClick={(e) => { e.stopPropagation(); onEdit?.({ id, title, description, priority, storyPoints, assignee, tags, comments, defaultTab: 'activity' }); }}
+          >
+            <span className="material-symbols-outlined text-base">manage_history</span>
+            <span className="text-sm font-bold">Lịch sử</span>
           </div>
         </div>
 

@@ -305,6 +305,40 @@ function initSocket(server, prisma) {
           if (params.model === "Task") eventName = "task:changed";
           if (params.model === "Comment") eventName = "comment:changed";
 
+          let eventData = result;
+          // US-062: Đảm bảo dữ liệu phát qua WebSocket luôn kèm thông tin đầy đủ của Assignee
+          if (params.model === "Task" && ["create", "update"].includes(params.action) && result?.id && !result?.assignee) {
+            try {
+              const fullTask = await prisma.task.findUnique({
+                where: { id: result.id },
+                include: {
+                  assignee: { select: { id: true, fullName: true, email: true, avatar: true } }
+                }
+              });
+              if (fullTask) eventData = fullTask;
+            } catch (e) {
+              console.error("Lỗi fetch full task assignee:", e);
+            }
+          } else if (params.model === "UserStory" && ["create", "update"].includes(params.action) && result?.id && !result?.assignee) {
+            try {
+              const fullStory = await prisma.userStory.findUnique({
+                where: { id: result.id },
+                include: {
+                  assignee: { select: { id: true, fullName: true, email: true, avatar: true } },
+                  tasks: {
+                    include: {
+                      assignee: { select: { id: true, fullName: true, email: true, avatar: true } }
+                    }
+                  },
+                  comments: { select: { id: true } }
+                }
+              });
+              if (fullStory) eventData = fullStory;
+            } catch (e) {
+              console.error("Lỗi fetch full story assignee:", e);
+            }
+          }
+
           const eventId = `evt_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
           const entityId = result?.id || result?.userStoryId || result?.taskId || null;
           io.to(projectId).to(`project_${projectId}`).emit(eventName, {
@@ -313,7 +347,7 @@ function initSocket(server, prisma) {
             projectId,
             model: params.model,
             entityId,
-            data: result || null,
+            data: eventData || null,
             timestamp: Date.now()
           });
           console.log(`Emitted ${eventName} [${params.action}] to room ${projectId}`);

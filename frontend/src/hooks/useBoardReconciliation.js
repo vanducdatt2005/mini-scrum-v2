@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import toast from 'react-hot-toast';
 import { getSocket, onSocketReconnect } from '../context/SocketContext';
 import { getBoardState } from '../services/api';
 import { 
@@ -10,8 +11,8 @@ import {
 } from '../utils/boardReconciliation';
 
 /**
- * Hook quản lý đối chiếu dữ liệu (Reconciliation) và chống trùng lặp (Deduplication)
- * cho Board và Backlog.
+ * Hook quản lý đối chiếu dữ liệu (Reconciliation), chống trùng lặp (Deduplication)
+ * và cập nhật Real-time (US-062) cho Task Board và Kanban Board.
  * 
  * @param {string} projectId 
  * @param {Array} stories - State danh sách stories hiện tại
@@ -126,7 +127,7 @@ export default function useBoardReconciliation({ projectId, stories, setStories,
     performReconciliationRef.current = performReconciliation;
   }, [performReconciliation]);
 
-  // 1. Tự động đối chiếu khi WebSocket Reconnect, Browser Online, hoặc Tab Active (AC2)
+  // 1. Tự động đối chiếu khi WebSocket Reconnect, Browser Online, hoặc Tab Active (US-063)
   useEffect(() => {
     if (!projectId) return;
 
@@ -137,12 +138,12 @@ export default function useBoardReconciliation({ projectId, stories, setStories,
       }
     };
 
-    // Khi WebSocket reconnect thành công (AC2)
+    // Khi WebSocket reconnect thành công
     const unsubscribeReconnect = onSocketReconnect(() => {
       handleReconcileTrigger('websocket-reconnect');
     });
 
-    // Khi trình duyệt chuyển sang Online (người dùng bật lại mạng hoặc bỏ tick Offline trong DevTools)
+    // Khi trình duyệt chuyển sang Online
     const handleBrowserOnline = () => {
       console.log('🌐 [Network] Trình duyệt Online trở lại. Kích hoạt State Reconciliation (AC2)...');
       handleReconcileTrigger('browser-online');
@@ -166,12 +167,31 @@ export default function useBoardReconciliation({ projectId, stories, setStories,
     };
   }, [projectId]);
 
-  // 2. Lắng nghe socket events với bộ lọc Event Deduplication (AC1)
+  // 2. US-062: Lắng nghe socket events Real-time cập nhật Status, Assignee & Toast Notification
   useEffect(() => {
     const socket = getSocket();
     if (!socket || !projectId) return;
 
+    const statusLabels = {
+      TODO: 'To Do',
+      IN_PROGRESS: 'In Progress',
+      DONE: 'Done',
+      REJECTED: 'Rejected'
+    };
+
+    const toastStyle = {
+      borderRadius: '12px',
+      background: '#1e293b',
+      color: '#ffffff',
+      fontSize: '13px',
+      fontWeight: '500',
+      padding: '10px 14px',
+      boxShadow: '0 8px 24px rgba(0,0,0,0.18)'
+    };
+
+    // Xử lý sự kiện Task thay đổi (AC1, AC2, AC3, AC4)
     const handleTaskChanged = (event) => {
+      // AC4: Chỉ xử lý nếu đúng Project hiện tại
       if (event?.projectId && event.projectId !== projectId) return;
 
       // AC1: Kiểm tra chống nhận trùng lặp sự kiện
@@ -182,9 +202,38 @@ export default function useBoardReconciliation({ projectId, stories, setStories,
 
       console.log(`[WebSocket] Xử lý sự kiện task:changed (Action: ${event.action})`, event.data || event.entityId);
 
-      // Nếu có đầy đủ dữ liệu task, tiến hành upsert in-place ngay lập tức (AC1)
-      if (event.data && typeof setStories === 'function') {
-        setStories(prev => upsertTaskInStories(prev, event.data, event.action));
+      const incomingTask = event.data;
+      if (incomingTask && typeof setStories === 'function') {
+        const allCurrentTasks = (storiesRef.current || []).flatMap(s => s.tasks || []);
+        const prevTask = allCurrentTasks.find(t => t.id === incomingTask.id);
+
+        // AC3: Hiển thị Toast Notification nhẹ khi có thay đổi từ người khác
+        if (event.action === 'update' && prevTask) {
+          // AC1: Thông báo khi đổi trạng thái (Status)
+          if (prevTask.status !== incomingTask.status) {
+            const oldLabel = statusLabels[prevTask.status] || prevTask.status;
+            const newLabel = statusLabels[incomingTask.status] || incomingTask.status;
+            toast(`Task "${incomingTask.title}": ${oldLabel} → ${newLabel}`, {
+              icon: '🔄',
+              position: 'bottom-right',
+              duration: 3500,
+              style: toastStyle
+            });
+          }
+          // AC2: Thông báo khi đổi người phụ trách (Assignee)
+          else if (prevTask.assigneeId !== incomingTask.assigneeId) {
+            const newAssigneeName = incomingTask.assignee?.fullName || incomingTask.assignee?.email || 'Chưa gán';
+            toast(`Task "${incomingTask.title}" đã gán cho ${newAssigneeName}`, {
+              icon: '👤',
+              position: 'bottom-right',
+              duration: 3500,
+              style: toastStyle
+            });
+          }
+        }
+
+        // Cập nhật state in-place ngay lập tức (AC1, AC2)
+        setStories(prev => upsertTaskInStories(prev, incomingTask, event.action));
       } else {
         // Fallback: nếu event không mang data, gọi đối chiếu nhẹ
         if (typeof performReconciliationRef.current === 'function') {
@@ -193,6 +242,7 @@ export default function useBoardReconciliation({ projectId, stories, setStories,
       }
     };
 
+    // Xử lý sự kiện UserStory thay đổi (AC1, AC2, AC3, AC4)
     const handleStoryChanged = (event) => {
       if (event?.projectId && event.projectId !== projectId) return;
 
@@ -203,8 +253,36 @@ export default function useBoardReconciliation({ projectId, stories, setStories,
 
       console.log(`[WebSocket] Xử lý sự kiện userStory:changed (Action: ${event.action})`, event.data || event.entityId);
 
-      if (event.data && typeof setStories === 'function') {
-        setStories(prev => upsertStoryInList(prev, event.data, event.action));
+      const incomingStory = event.data;
+      if (incomingStory && typeof setStories === 'function') {
+        const prevStory = (storiesRef.current || []).find(s => s.id === incomingStory.id);
+
+        if (event.action === 'update' && prevStory) {
+          // AC1: Đổi trạng thái Story trên Kanban Board
+          if (prevStory.status !== incomingStory.status) {
+            const oldLabel = statusLabels[prevStory.status] || prevStory.status;
+            const newLabel = statusLabels[incomingStory.status] || incomingStory.status;
+            toast(`Story "${incomingStory.title}": ${oldLabel} → ${newLabel}`, {
+              icon: '🔄',
+              position: 'bottom-right',
+              duration: 3500,
+              style: toastStyle
+            });
+          }
+          // AC2: Đổi người phụ trách Story
+          else if (prevStory.assigneeId !== incomingStory.assigneeId) {
+            const newAssigneeName = incomingStory.assignee?.fullName || incomingStory.assignee?.email || 'Chưa gán';
+            toast(`Story "${incomingStory.title}" đã gán cho ${newAssigneeName}`, {
+              icon: '👤',
+              position: 'bottom-right',
+              duration: 3500,
+              style: toastStyle
+            });
+          }
+        }
+
+        // Cập nhật state Story in-place
+        setStories(prev => upsertStoryInList(prev, incomingStory, event.action));
       } else {
         if (typeof performReconciliationRef.current === 'function') {
           performReconciliationRef.current('socket-story-changed');

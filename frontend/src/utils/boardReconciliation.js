@@ -144,7 +144,16 @@ export function upsertTaskInStories(stories = [], incomingTask, action = 'update
       let newTasks;
       if (hasTaskCurrently) {
         // Cập nhật in-place thẻ đã tồn tại (chống nhân đôi thẻ - AC1)
-        newTasks = currentTasks.map(t => t.id === taskId ? { ...t, ...incomingTask } : t);
+        newTasks = currentTasks.map(t => {
+          if (t.id === taskId) {
+            return {
+              ...t,
+              ...incomingTask,
+              assignee: incomingTask.assignee !== undefined ? incomingTask.assignee : (incomingTask.assigneeId ? t.assignee : null)
+            };
+          }
+          return t;
+        });
       } else {
         // Thêm mới nếu chưa có
         newTasks = [...currentTasks, incomingTask];
@@ -184,6 +193,7 @@ export function upsertStoryInList(stories = [], incomingStory, action = 'update'
         return {
           ...s,
           ...incomingStory,
+          assignee: incomingStory.assignee !== undefined ? incomingStory.assignee : (incomingStory.assigneeId ? s.assignee : null),
           tasks: incomingStory.tasks !== undefined ? incomingStory.tasks : s.tasks
         };
       }

@@ -207,9 +207,72 @@ async function getActivities({ entityType, entityId, cursor, limit = 20 }) {
   };
 }
 
+/**
+ * Helper logActivity ghi nhận hoạt động dự án và phát socket realtime (SCRUM-71)
+ */
+async function logActivity({ projectId, actorId, action, targetType, targetId, targetTitle, meta }) {
+  try {
+    if (!projectId) {
+      console.warn('[ActivityService] logActivity thiếu projectId:', { action, targetType, targetId });
+      return null;
+    }
+
+    const newLog = await prisma.activityLog.create({
+      data: {
+        projectId,
+        actorId: actorId || null,
+        action,
+        targetType,
+        targetId: targetId ? String(targetId) : null,
+        targetTitle: targetTitle || null,
+        meta: meta || null,
+      },
+      include: {
+        actor: {
+          select: { id: true, fullName: true, email: true, avatar: true }
+        }
+      }
+    });
+
+    const payload = {
+      id: newLog.id,
+      projectId: newLog.projectId,
+      actor: newLog.actor ? {
+        id: newLog.actor.id,
+        name: newLog.actor.fullName || newLog.actor.email || 'Người dùng',
+        avatarUrl: newLog.actor.avatar || null,
+        avatar: newLog.actor.avatar || null,
+      } : {
+        id: null,
+        name: 'Hệ thống',
+        avatarUrl: null,
+        avatar: null
+      },
+      action: newLog.action,
+      targetType: newLog.targetType,
+      targetId: newLog.targetId,
+      targetTitle: newLog.targetTitle,
+      meta: newLog.meta,
+      createdAt: newLog.createdAt
+    };
+
+    const io = getIO();
+    if (io) {
+      const room = `project_${projectId}`;
+      io.to(projectId).to(room).emit('ACTIVITY_CREATED', payload);
+    }
+
+    return payload;
+  } catch (err) {
+    console.error('[ActivityService] Lỗi khi logActivity (đã bọc try-catch):', err);
+    return null;
+  }
+}
+
 module.exports = {
   recordActivity,
   diffAndRecord,
-  getActivities
+  getActivities,
+  logActivity
 };
 

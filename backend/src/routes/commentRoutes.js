@@ -1,4 +1,4 @@
-const { recordActivity } = require('../services/activityService');
+const { recordActivity, logActivity } = require('../services/activityService');
 const express = require('express');
 const router = express.Router({ mergeParams: true });
 const { PrismaClient } = require('@prisma/client');
@@ -354,6 +354,18 @@ const createTaskCommentHandler = async (req, res) => {
       console.log(`📡 [Socket] Emitted COMMENT_CREATED for Task ${taskId}`);
     }
 
+    if (projectId) {
+      logActivity({
+        projectId,
+        actorId: userId,
+        action: 'COMMENT_ADDED',
+        targetType: 'COMMENT',
+        targetId: comment.id,
+        targetTitle: check.task?.title || 'Task',
+        meta: { taskId, content: comment.content?.substring(0, 50) }
+      }).catch(e => console.error(e));
+    }
+
     // Gửi thông báo @mention cho những người được tag
     const author = await prisma.user.findUnique({
       where: { id: userId },
@@ -530,6 +542,18 @@ router.post('/userstory/:storyId/comments', authMiddleware, async (req, res) => 
         io.to(projectId).to(`project_${projectId}`).emit("comment:changed", payload);
       }
       console.log(`📡 [Socket] Emitted COMMENT_CREATED for Story ${storyId}`);
+    }
+
+    if (projectId) {
+      logActivity({
+        projectId,
+        actorId: userId,
+        action: 'COMMENT_ADDED',
+        targetType: 'COMMENT',
+        targetId: comment.id,
+        targetTitle: check.story?.title || 'User Story',
+        meta: { storyId, content: comment.content?.substring(0, 50) }
+      }).catch(e => console.error(e));
     }
 
     const author = await prisma.user.findUnique({

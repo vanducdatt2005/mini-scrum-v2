@@ -116,6 +116,7 @@ export const markAllNotificationsAsRead = () => api.patch('/notifications/read-a
 
 // ACTIVITY LOGS / AUDIT TRAIL (Read-only)
 export const getActivities = (params) => api.get('/activities', { params });
+export const getProjectActivities = (projectId, params) => api.get(`/projects/${projectId}/activities`, { params });
 
 // USER SETTINGS
 export const getUserProfile = () => api.get('/user/profile');

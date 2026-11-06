@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
 const { getActivities } = require('../services/activityService');
 
 // Middleware xác thực token
@@ -55,6 +57,111 @@ router.get('/activities', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('Lỗi lấy danh sách Activity Logs:', err);
     res.status(500).json({ error: 'Lỗi máy chủ khi lấy lịch sử thay đổi' });
+  }
+});
+
+/**
+ * 2. GET /api/projects/:id/activities (SCRUM-71)
+ * Query Params:
+ *  - limit: number (optional, default 20)
+ *  - cursor: string (optional)
+ * Phân trang theo Cursor, kiểm tra quyền thành viên (403 nếu không thuộc project)
+ */
+router.get('/projects/:id/activities', authMiddleware, async (req, res) => {
+  try {
+    const projectId = req.params.id;
+    const userId = req.user.userId || req.user.id;
+
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+      select: { id: true }
+    });
+
+    if (!project) {
+      return res.status(404).json({ error: "Không tìm thấy dự án" });
+    }
+
+    const member = await prisma.projectMember.findFirst({
+      where: {
+        projectId,
+        userId
+      }
+    });
+
+    let isMember = Boolean(member);
+    if (!isMember) {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { role: true }
+      });
+      if (user && user.role === 'ADMIN') {
+        isMember = true;
+      }
+    }
+
+    if (!isMember) {
+      return res.status(403).json({ error: "Bạn không có quyền truy cập hoạt động của dự án này" });
+    }
+
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+    const cursor = req.query.cursor;
+
+    const queryArgs = {
+      where: { projectId },
+      orderBy: [
+        { createdAt: 'desc' },
+        { id: 'desc' }
+      ],
+      take: limit + 1,
+      include: {
+        actor: {
+          select: { id: true, fullName: true, email: true, avatar: true }
+        }
+      }
+    };
+
+    if (cursor) {
+      queryArgs.cursor = { id: cursor };
+      queryArgs.skip = 1;
+    }
+
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    const activities = await prisma.activityLog.findMany(queryArgs);
+
+    let nextCursor = null;
+    if (activities.length > limit) {
+      activities.pop();
+      nextCursor = activities[activities.length - 1]?.id || null;
+    }
+
+    const items = activities.map((act) => ({
+      id: act.id,
+      projectId: act.projectId,
+      actor: act.actor
+        ? {
+            id: act.actor.id,
+            name: act.actor.fullName || act.actor.email || 'Người dùng',
+            avatarUrl: act.actor.avatar || null,
+            avatar: act.actor.avatar || null
+          }
+        : {
+            id: null,
+            name: 'Hệ thống',
+            avatarUrl: null,
+            avatar: null
+          },
+      action: act.action,
+      targetType: act.targetType,
+      targetId: act.targetId,
+      targetTitle: act.targetTitle,
+      meta: act.meta,
+      createdAt: act.createdAt
+    }));
+
+    return res.json({ items, nextCursor });
+  } catch (err) {
+    console.error('Lỗi khi lấy Activity Feed của Project:', err);
+    return res.status(500).json({ error: 'Lỗi máy chủ khi lấy danh sách hoạt động' });
   }
 });
 

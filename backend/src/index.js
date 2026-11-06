@@ -1,6 +1,6 @@
 const express = require("express");
 const http = require("http");
-const { initSocket } = require("./socket");
+const { initSocket, getIO } = require("./socket");
 const cors = require("cors");
 const dotenv = require("dotenv");
 const { PrismaClient } = require("@prisma/client");
@@ -1705,10 +1705,20 @@ app.post("/api/userstory/:storyId/tasks", authMiddleware, async (req, res) => {
   }
 });
 
-// US-021: CẬP NHẬT TASK (Status hoặc Details)
+// US-021: CẬP NHẬT TASK (Status hoặc Details) - Optimistic Locking (US-64)
 app.patch("/api/tasks/:id", authMiddleware, async (req, res) => {
   const { id } = req.params;
-  const { title, description, status, assigneeId, storyId, dueDate } = req.body;
+  const { title, description, status, assigneeId, storyId, dueDate, version } = req.body;
+
+  if (version === undefined || version === null) {
+    return res.status(400).json({ error: "Thiếu trường version để xác thực Optimistic Locking" });
+  }
+
+  const versionInt = parseInt(version, 10);
+  if (isNaN(versionInt)) {
+    return res.status(400).json({ error: "Trường version phải là số nguyên hợp lệ" });
+  }
+
   try {
     const currentTask = await prisma.task.findUnique({
       where: { id },
@@ -1732,18 +1742,56 @@ app.patch("/api/tasks/:id", authMiddleware, async (req, res) => {
       }
     }
 
-    const updated = await prisma.task.update({
+    const updateData = {
+      version: { increment: 1 }
+    };
+    if (title !== undefined) updateData.title = title;
+    if (description !== undefined) updateData.description = description;
+    if (status !== undefined) updateData.status = status;
+    if (assigneeId !== undefined) updateData.assigneeId = assigneeId;
+    if (storyId !== undefined) updateData.storyId = storyId;
+    if (dueDate !== undefined) updateData.dueDate = dueDate ? new Date(dueDate) : null;
+
+    const result = await prisma.task.updateMany({
+      where: { id, version: versionInt },
+      data: updateData
+    });
+
+    if (result.count === 0) {
+      const latestTask = await prisma.task.findUnique({
+        where: { id },
+        include: {
+          assignee: { select: { id: true, fullName: true, email: true, avatar: true } },
+          userStory: { select: { projectId: true } }
+        }
+      });
+
+      if (!latestTask) {
+        return res.status(404).json({ error: "Không tìm thấy Task" });
+      }
+
+      const updatedByName = latestTask.assignee?.fullName || latestTask.assignee?.email || "Người dùng khác";
+      const updatedById = latestTask.assignee?.id || "unknown";
+
+      return res.status(409).json({
+        code: "VERSION_MISMATCH",
+        message: `Task này vừa được ${updatedByName} cập nhật. Vui lòng kiểm tra lại!`,
+        latestTask: {
+          ...latestTask,
+          updated_at: latestTask.updatedAt
+        },
+        updatedBy: {
+          id: updatedById,
+          name: updatedByName
+        }
+      });
+    }
+
+    const updatedTask = await prisma.task.findUnique({
       where: { id },
-      data: {
-        title: title !== undefined ? title : undefined,
-        description: description !== undefined ? description : undefined,
-        status: status !== undefined ? status : undefined,
-        assigneeId: assigneeId !== undefined ? assigneeId : undefined,
-        storyId: storyId !== undefined ? storyId : undefined,
-        dueDate: dueDate !== undefined ? (dueDate ? new Date(dueDate) : null) : undefined,
-      },
       include: {
-        assignee: { select: { id: true, fullName: true, email: true, avatar: true } }
+        assignee: { select: { id: true, fullName: true, email: true, avatar: true } },
+        userStory: { select: { projectId: true } }
       }
     });
 
@@ -1767,10 +1815,31 @@ app.patch("/api/tasks/:id", authMiddleware, async (req, res) => {
       entityId: id,
       actorId: req.user.userId,
       before: currentTask,
-      after: updated
+      after: updatedTask
     });
 
-    res.json(updated);
+    try {
+      const io = getIO();
+      if (io && projectId) {
+        const eventId = `evt_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+        io.to(projectId).to(`project_${projectId}`).emit("task:changed", {
+          eventId,
+          action: "update",
+          projectId,
+          model: "Task",
+          entityId: updatedTask.id,
+          data: updatedTask,
+          timestamp: Date.now()
+        });
+      }
+    } catch (socketErr) {
+      console.error("Socket emit error:", socketErr);
+    }
+
+    res.json({
+      ...updatedTask,
+      updated_at: updatedTask.updatedAt
+    });
   } catch (err) {
     res.status(400).json({ error: "Lỗi khi cập nhật Task: " + err.message });
   }
@@ -1778,7 +1847,7 @@ app.patch("/api/tasks/:id", authMiddleware, async (req, res) => {
 
 // GÁN TASK CHO MEMBER BẰNG EMAIL
 app.patch("/api/tasks/:id/assign", authMiddleware, async (req, res) => {
-  const { email } = req.body;
+  const { email, version } = req.body;
   try {
     const currentTask = await prisma.task.findUnique({
       where: { id: req.params.id },
@@ -1800,9 +1869,38 @@ app.patch("/api/tasks/:id/assign", authMiddleware, async (req, res) => {
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return res.status(404).json({ error: "Không tìm thấy user với email này" });
 
+    if (version !== undefined && version !== null) {
+      const versionInt = parseInt(version, 10);
+      const result = await prisma.task.updateMany({
+        where: { id: req.params.id, version: versionInt },
+        data: { assigneeId: user.id, version: { increment: 1 } }
+      });
+
+      if (result.count === 0) {
+        const latestTask = await prisma.task.findUnique({
+          where: { id: req.params.id },
+          include: { assignee: { select: { id: true, fullName: true, email: true } }, userStory: { select: { projectId: true } } }
+        });
+        if (!latestTask) return res.status(404).json({ error: "Không tìm thấy Task" });
+        const updatedByName = latestTask.assignee?.fullName || latestTask.assignee?.email || "Người dùng khác";
+        return res.status(409).json({
+          code: "VERSION_MISMATCH",
+          message: `Task này vừa được ${updatedByName} cập nhật. Vui lòng kiểm tra lại!`,
+          latestTask: { ...latestTask, updated_at: latestTask.updatedAt },
+          updatedBy: { id: latestTask.assignee?.id || "unknown", name: updatedByName }
+        });
+      }
+
+      const updated = await prisma.task.findUnique({
+        where: { id: req.params.id },
+        include: { assignee: { select: { id: true, fullName: true, email: true } }, userStory: { select: { projectId: true } } }
+      });
+      return res.json({ message: "Gán thành viên thành công", task: { ...updated, updated_at: updated.updatedAt } });
+    }
+
     const updated = await prisma.task.update({
       where: { id: req.params.id },
-      data: { assigneeId: user.id },
+      data: { assigneeId: user.id, version: { increment: 1 } },
       include: {
         assignee: { select: { id: true, fullName: true, email: true, avatar: true } }
       }

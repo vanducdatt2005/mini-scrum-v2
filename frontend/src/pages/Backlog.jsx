@@ -253,12 +253,21 @@ export default function Backlog() {
         }));
 
         try {
-          await updateTask(taskId, { status: newStatus, storyId: targetStoryId });
+          const currentTask = stories.flatMap(s => s.tasks || []).find(t => t.id === taskId);
+          await updateTask(taskId, {
+            status: newStatus,
+            storyId: targetStoryId,
+            version: currentTask?.version ?? 1
+          });
           // loadData() sẽ fetch lại để đảm bảo đồng bộ hoàn toàn
           await loadData();
         } catch (err) {
           console.error("Lỗi cập nhật task:", err);
-          alert("Không thể cập nhật trạng thái Task");
+          if (err.response?.status === 409) {
+            alert(err.response?.data?.message || "Task đã bị thay đổi bởi người khác. Vui lòng thử lại!");
+          } else {
+            alert("Không thể cập nhật trạng thái Task");
+          }
           await loadData(); // Rollback
         }
       }
@@ -456,10 +465,11 @@ export default function Backlog() {
     const email = window.prompt("Nhập Email của người phụ trách Task:");
     if (!email) return;
     try {
-      await assignTaskByEmail(taskId, email);
+      const taskObj = stories.flatMap(s => s.tasks || []).find(t => t.id === taskId);
+      await assignTaskByEmail(taskId, email, taskObj?.version ?? 1);
       await loadData();
     } catch (e) {
-      window.alert(e.response?.data?.error || "Lỗi gán Task!");
+      window.alert(e.response?.data?.message || e.response?.data?.error || "Lỗi gán Task!");
     }
   };
 

@@ -113,9 +113,12 @@ model Task {
   dueDate     DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  version     Int       @default(1)
   comments    Comment[]
   attachments Attachment[]
   notifications Notification[]
+
+  @@index([id, version])
 }
 
 model DailyStandup {

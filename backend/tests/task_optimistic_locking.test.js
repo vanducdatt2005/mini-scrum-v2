@@ -4,6 +4,8 @@ const jwt = require('jsonwebtoken');
 const { app, prisma, server } = require('../src/index');
 
 test('Optimistic Locking for Task tests', async (t) => {
+  let task;
+  try {
   // Chuẩn bị dữ liệu test
   let user = await prisma.user.findFirst();
   if (!user) {
@@ -33,7 +35,7 @@ test('Optimistic Locking for Task tests', async (t) => {
   }
 
   // Tạo 1 task thử nghiệm với version ban đầu
-  const task = await prisma.task.create({
+  task = await prisma.task.create({
     data: {
       title: 'Initial Task Title',
       description: 'Initial Description',
@@ -145,8 +147,15 @@ test('Optimistic Locking for Task tests', async (t) => {
     assert.ok(conflictRes.body.message);
   });
 
-  // Dọn dẹp dữ liệu test
-  await prisma.task.delete({ where: { id: task.id } }).catch(() => {});
-  await prisma.$disconnect();
-  server.close();
+  } catch (err) {
+    console.error('TEST ERROR DETAILS:', err);
+    throw err;
+  } finally {
+    if (task?.id) {
+      await prisma.task.delete({ where: { id: task.id } }).catch(() => {});
+    }
+    await prisma.$disconnect();
+    await new Promise(resolve => server.close(resolve));
+    process.exit(0);
+  }
 });

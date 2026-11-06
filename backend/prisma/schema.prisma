@@ -39,6 +39,7 @@ model Project {
   sprints     Sprint[]
   standups    DailyStandup[]
   notifications Notification[]
+  activityLogs  ActivityLog[]
 }
 
 model ProjectMember {
@@ -268,15 +269,23 @@ enum ActionType {
 
 model ActivityLog {
   id             String      @id @default(cuid())
-  entityType     EntityType  @map("entity_type")
-  entityId       String      @map("entity_id")
+  projectId      String?     @map("project_id")
   actorId        String?     @map("actor_id")
-  actionType     ActionType  @map("action_type")
+  action         String?     @map("action")
+  targetType     String?     @map("target_type")
+  targetId       String?     @map("target_id")
+  targetTitle    String?     @map("target_title")
+  meta           Json?       @map("meta")
+  entityType     EntityType? @map("entity_type")
+  entityId       String?     @map("entity_id")
+  actionType     ActionType? @map("action_type")
   changesPayload Json?       @map("changes_payload")
   createdAt      DateTime    @default(now()) @map("created_at")
 
   actor          User?       @relation("ActorActivityLogs", fields: [actorId], references: [id], onDelete: SetNull)
+  project        Project?    @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
+  @@index([projectId, createdAt(sort: Desc)])
   @@index([entityType, entityId, createdAt(sort: Desc)])
   @@map("activity_logs")
 }

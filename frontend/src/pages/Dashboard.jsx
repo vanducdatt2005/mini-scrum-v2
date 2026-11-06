@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import MainLayout from "../components/MainLayout";
 import SprintProgress from "../components/SprintProgress";
 import MyTasks from "../components/MyTasks";
+import ActivityFeed from "../components/ActivityFeed";
 import RecentActivity from "../components/RecentActivity";
 import SprintStats from "../components/SprintStats";
 import FAB from "../components/FAB";
@@ -199,7 +200,7 @@ export default function Dashboard() {
                 velocity={stats.completedPoints || 0}
                 capacity={stats.totalPoints || 0}
               />
-              <RecentActivity projectId={projectId} />
+              <ActivityFeed projectId={projectId} />
             </div>
           </div>
         ) : (

@@ -17,7 +17,7 @@ const sprintCeremonyRoutes = require('./routes/sprintCeremonyRoutes');
 const sprintSummaryRoutes  = require('./routes/sprintSummaryRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const activityRoutes = require('./routes/activityRoutes');
-const { recordActivity, diffAndRecord } = require('./services/activityService');
+const { recordActivity, diffAndRecord, logActivity } = require('./services/activityService');
 const { sendTaskAssignmentNotification } = require('./services/notificationService');
 
 
@@ -641,6 +641,16 @@ app.post("/api/userstory", authMiddleware, async (req, res) => {
       }
     });
 
+    logActivity({
+      projectId: story.projectId,
+      actorId: req.user.userId,
+      action: 'STORY_CREATED',
+      targetType: 'STORY',
+      targetId: story.id,
+      targetTitle: story.title,
+      meta: { status: story.status, priority: story.priority }
+    }).catch(e => console.error(e));
+
     res.status(201).json({ message: "Tạo User Story thành công", story });
   } catch (err) {
     console.error(err);
@@ -660,6 +670,16 @@ app.delete("/api/userstory/:id", authMiddleware, async (req, res) => {
     }
 
     await prisma.userStory.delete({ where: { id: req.params.id } });
+
+    logActivity({
+      projectId: story.projectId,
+      actorId: req.user.userId,
+      action: 'STORY_DELETED',
+      targetType: 'STORY',
+      targetId: story.id,
+      targetTitle: story.title
+    }).catch(e => console.error(e));
+
     res.json({ message: "Xóa User Story thành công" });
   } catch (err) {
     res.status(500).json({ error: "Lỗi xóa User Story" });
@@ -760,6 +780,19 @@ app.patch("/api/userstory/:id", authMiddleware, async (req, res) => {
       after: updated
     });
 
+    const storyAction = (status !== undefined && status !== story.status)
+      ? 'STORY_STATUS_CHANGED'
+      : 'STORY_UPDATED';
+    logActivity({
+      projectId: story.projectId,
+      actorId: req.user.userId,
+      action: storyAction,
+      targetType: 'STORY',
+      targetId: id,
+      targetTitle: updated.title,
+      meta: { oldStatus: story.status, newStatus: updated.status }
+    }).catch(e => console.error(e));
+
     res.json({ message: "Cập nhật thành công", story: updated });
   } catch (err) {
     console.error("Update story error:", err);
@@ -836,6 +869,20 @@ app.post("/api/userstory/:id/comments", authMiddleware, async (req, res) => {
       },
       include: { user: { select: { fullName: true, email: true } } }
     });
+
+    const story = await prisma.userStory.findUnique({ where: { id: req.params.id }, select: { projectId: true, title: true } });
+    if (story) {
+      logActivity({
+        projectId: story.projectId,
+        actorId: req.user.userId,
+        action: 'COMMENT_ADDED',
+        targetType: 'COMMENT',
+        targetId: comment.id,
+        targetTitle: story.title,
+        meta: { storyId: req.params.id, content: content?.substring(0, 50) }
+      }).catch(e => console.error(e));
+    }
+
     res.status(201).json(comment);
   } catch (err) {
     res.status(500).json({ error: "Lỗi khi lưu bình luận" });
@@ -1699,6 +1746,16 @@ app.post("/api/userstory/:storyId/tasks", authMiddleware, async (req, res) => {
       }
     });
 
+    logActivity({
+      projectId: story.projectId,
+      actorId: req.user?.userId,
+      action: 'TASK_CREATED',
+      targetType: 'TASK',
+      targetId: task.id,
+      targetTitle: task.title,
+      meta: { status: task.status }
+    }).catch(e => console.error(e));
+
     res.status(201).json(task);
   } catch (err) {
     res.status(400).json({ error: "Lỗi khi tạo Task: " + err.message });
@@ -1818,6 +1875,27 @@ app.patch("/api/tasks/:id", authMiddleware, async (req, res) => {
       after: updatedTask
     });
 
+    if (projectId) {
+      const taskAction = (status !== undefined && status !== currentTask.status)
+        ? 'TASK_STATUS_CHANGED'
+        : 'TASK_UPDATED';
+      logActivity({
+        projectId,
+        actorId: req.user.userId,
+        action: taskAction,
+        targetType: 'TASK',
+        targetId: id,
+        targetTitle: updatedTask.title,
+        meta: {
+          field: status !== undefined && status !== currentTask.status ? 'status' : (assigneeId !== undefined ? 'assignee' : 'details'),
+          oldStatus: currentTask.status,
+          newStatus: updatedTask.status,
+          oldAssigneeId: currentTask.assigneeId,
+          newAssigneeId: updatedTask.assigneeId
+        }
+      }).catch(e => console.error(e));
+    }
+
     try {
       const io = getIO();
       if (io && projectId) {
@@ -1922,6 +2000,18 @@ app.patch("/api/tasks/:id/assign", authMiddleware, async (req, res) => {
       after: updated
     });
 
+    if (projectId) {
+      logActivity({
+        projectId,
+        actorId: req.user.userId,
+        action: 'TASK_UPDATED',
+        targetType: 'TASK',
+        targetId: req.params.id,
+        targetTitle: updated.title,
+        meta: { field: 'assignee', assigneeName: user.fullName || user.email }
+      }).catch(e => console.error(e));
+    }
+
     res.json({ message: "Gán thành viên thành công", task: updated });
   } catch (err) {
     res.status(500).json({ error: "Lỗi gán Task" });
@@ -1932,7 +2022,21 @@ app.patch("/api/tasks/:id/assign", authMiddleware, async (req, res) => {
 app.delete("/api/tasks/:id", authMiddleware, async (req, res) => {
   const { id } = req.params;
   try {
+    const taskToDelete = await prisma.task.findUnique({
+      where: { id },
+      include: { userStory: { select: { projectId: true } } }
+    });
     await prisma.task.delete({ where: { id } });
+    if (taskToDelete?.userStory?.projectId) {
+      logActivity({
+        projectId: taskToDelete.userStory.projectId,
+        actorId: req.user?.userId,
+        action: 'TASK_DELETED',
+        targetType: 'TASK',
+        targetId: id,
+        targetTitle: taskToDelete.title
+      }).catch(e => console.error(e));
+    }
     res.json({ message: "Xóa Task thành công" });
   } catch (err) {
     res.status(400).json({ error: "Lỗi khi xóa Task: " + err.message });

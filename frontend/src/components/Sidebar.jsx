@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import JoinProjectModal from "./JoinProjectModal";
+import JoinPokerModal from "./JoinPokerModal";
 
 export default function Sidebar({ activePage = "Dashboard", isOpen, onClose, projectId }) {
   const navigate = useNavigate();
   const [showJoinModal, setShowJoinModal] = useState(false);
+  const [showPokerModal, setShowPokerModal] = useState(false);
 
   const navItems = [
     { icon: "dashboard", label: "Dashboard", href: "/dashboard" },
@@ -98,20 +100,35 @@ export default function Sidebar({ activePage = "Dashboard", isOpen, onClose, pro
             ))}
           </div>
 
-          {/* Quick Action: Join Project with Invite Code */}
-          <button
-            onClick={() => setShowJoinModal(true)}
-            className="w-full mt-4 flex items-center justify-center gap-2 px-3 py-2.5 rounded-2xl bg-primary/10 text-primary hover:bg-primary hover:text-white transition-all text-xs font-bold border border-primary/20 shadow-sm"
-          >
-            <span className="material-symbols-outlined text-base">key</span>
-            <span>Nhập mã mời</span>
-          </button>
+          {/* Quick Actions: Join Project & Join Poker */}
+          <div className="mt-4 flex flex-col gap-2">
+            <button
+              onClick={() => setShowJoinModal(true)}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-2xl bg-primary/10 text-primary hover:bg-primary hover:text-white transition-all text-xs font-bold border border-primary/20 shadow-sm"
+            >
+              <span className="material-symbols-outlined text-base">key</span>
+              <span>Nhập mã mời</span>
+            </button>
+
+            <button
+              onClick={() => setShowPokerModal(true)}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-2xl bg-purple-500/10 text-purple-700 hover:bg-purple-600 hover:text-white transition-all text-xs font-bold border border-purple-500/20 shadow-sm"
+            >
+              <span className="material-symbols-outlined text-base">style</span>
+              <span>Vào phòng Poker</span>
+            </button>
+          </div>
         </div>
       </aside>
 
       <JoinProjectModal
         isOpen={showJoinModal}
         onClose={() => setShowJoinModal(false)}
+      />
+
+      <JoinPokerModal
+        isOpen={showPokerModal}
+        onClose={() => setShowPokerModal(false)}
       />
     </>
   );

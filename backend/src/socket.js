@@ -253,8 +253,184 @@ function initSocket(server, prisma) {
     socket.on("leaveTask", handleLeaveTask);
     socket.on("LEAVE_TASK_ROOM", handleLeaveTask);
 
+
+    // =========================================================================
+    // PLANNING POKER WEBSOCKET REALTIME (US-033)
+    // =========================================================================
+    socket.on("poker:join", ({ roomCode, user }) => {
+      if (!roomCode || !user) return;
+      const cleanCode = String(roomCode).toUpperCase().trim();
+      const roomChannel = `poker_${cleanCode}`;
+      socket.join(roomChannel);
+      socket.pokerRoomCode = cleanCode;
+      socket.pokerUser = user;
+
+      console.log(`Socket ${socket.id} (User: ${user.fullName || user.id}) joined poker room: ${cleanCode}`);
+
+      // Khởi tạo state phòng nếu chưa có
+      if (!global.pokerRoomsState) {
+        global.pokerRoomsState = new Map();
+      }
+      if (!global.pokerRoomsState.has(cleanCode)) {
+        global.pokerRoomsState.set(cleanCode, {
+          members: new Map(),
+          isRevealed: false
+        });
+      }
+
+      const roomState = global.pokerRoomsState.get(cleanCode);
+      roomState.members.set(socket.id, {
+        socketId: socket.id,
+        userId: user.id,
+        fullName: user.fullName || user.email || 'Thành viên',
+        avatar: user.avatar || null,
+        vote: null,
+        hasVoted: false
+      });
+
+      // Phát lại danh sách thành viên hiện tại cho tất cả mọi người trong phòng
+      const membersList = Array.from(roomState.members.values()).map(m => ({
+        userId: m.userId,
+        fullName: m.fullName,
+        avatar: m.avatar,
+        hasVoted: m.hasVoted,
+        vote: roomState.isRevealed ? m.vote : null
+      }));
+
+      io.to(roomChannel).emit("poker:stateUpdate", {
+        roomCode: cleanCode,
+        members: membersList,
+        isRevealed: roomState.isRevealed
+      });
+    });
+
+    socket.on("poker:vote", ({ roomCode, vote }) => {
+      if (!roomCode) return;
+      const cleanCode = String(roomCode).toUpperCase().trim();
+      const roomChannel = `poker_${cleanCode}`;
+
+      if (global.pokerRoomsState && global.pokerRoomsState.has(cleanCode)) {
+        const roomState = global.pokerRoomsState.get(cleanCode);
+        const member = roomState.members.get(socket.id);
+        if (member) {
+          member.vote = vote;
+          member.hasVoted = vote !== null && vote !== undefined;
+        }
+
+        const membersList = Array.from(roomState.members.values()).map(m => ({
+          userId: m.userId,
+          fullName: m.fullName,
+          avatar: m.avatar,
+          hasVoted: m.hasVoted,
+          vote: roomState.isRevealed ? m.vote : null
+        }));
+
+        io.to(roomChannel).emit("poker:stateUpdate", {
+          roomCode: cleanCode,
+          members: membersList,
+          isRevealed: roomState.isRevealed
+        });
+      }
+    });
+
+    socket.on("poker:reveal", ({ roomCode }) => {
+      if (!roomCode) return;
+      const cleanCode = String(roomCode).toUpperCase().trim();
+      const roomChannel = `poker_${cleanCode}`;
+
+      if (global.pokerRoomsState && global.pokerRoomsState.has(cleanCode)) {
+        const roomState = global.pokerRoomsState.get(cleanCode);
+        roomState.isRevealed = true;
+
+        const membersList = Array.from(roomState.members.values()).map(m => ({
+          userId: m.userId,
+          fullName: m.fullName,
+          avatar: m.avatar,
+          hasVoted: m.hasVoted,
+          vote: m.vote
+        }));
+
+        io.to(roomChannel).emit("poker:stateUpdate", {
+          roomCode: cleanCode,
+          members: membersList,
+          isRevealed: true
+        });
+      }
+    });
+
+    socket.on("poker:reset", ({ roomCode }) => {
+      if (!roomCode) return;
+      const cleanCode = String(roomCode).toUpperCase().trim();
+      const roomChannel = `poker_${cleanCode}`;
+
+      if (global.pokerRoomsState && global.pokerRoomsState.has(cleanCode)) {
+        const roomState = global.pokerRoomsState.get(cleanCode);
+        roomState.isRevealed = false;
+        roomState.members.forEach(m => {
+          m.vote = null;
+          m.hasVoted = false;
+        });
+
+        const membersList = Array.from(roomState.members.values()).map(m => ({
+          userId: m.userId,
+          fullName: m.fullName,
+          avatar: m.avatar,
+          hasVoted: false,
+          vote: null
+        }));
+
+        io.to(roomChannel).emit("poker:stateUpdate", {
+          roomCode: cleanCode,
+          members: membersList,
+          isRevealed: false
+        });
+      }
+    });
+
+    socket.on("poker:leave", ({ roomCode }) => {
+      if (!roomCode) return;
+      const cleanCode = String(roomCode).toUpperCase().trim();
+      const roomChannel = `poker_${cleanCode}`;
+      socket.leave(roomChannel);
+
+      if (global.pokerRoomsState && global.pokerRoomsState.has(cleanCode)) {
+        const roomState = global.pokerRoomsState.get(cleanCode);
+        roomState.members.delete(socket.id);
+
+        const membersList = Array.from(roomState.members.values()).map(m => ({
+          userId: m.userId,
+          fullName: m.fullName,
+          avatar: m.avatar,
+          hasVoted: m.hasVoted,
+          vote: roomState.isRevealed ? m.vote : null
+        }));
+
+        io.to(roomChannel).emit("poker:stateUpdate", {
+          roomCode: cleanCode,
+          members: membersList,
+          isRevealed: roomState.isRevealed
+        });
+      }
+    });
+
     socket.on("disconnect", (reason) => {
       console.log(`Socket disconnected: ${socket.id}, reason: ${reason}`);
+      if (socket.pokerRoomCode && global.pokerRoomsState && global.pokerRoomsState.has(socket.pokerRoomCode)) {
+        const roomState = global.pokerRoomsState.get(socket.pokerRoomCode);
+        roomState.members.delete(socket.id);
+        const membersList = Array.from(roomState.members.values()).map(m => ({
+          userId: m.userId,
+          fullName: m.fullName,
+          avatar: m.avatar,
+          hasVoted: m.hasVoted,
+          vote: roomState.isRevealed ? m.vote : null
+        }));
+        io.to(`poker_${socket.pokerRoomCode}`).emit("poker:stateUpdate", {
+          roomCode: socket.pokerRoomCode,
+          members: membersList,
+          isRevealed: roomState.isRevealed
+        });
+      }
     });
   });
 

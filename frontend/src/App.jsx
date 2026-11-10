@@ -17,6 +17,7 @@ import StandupPage from './pages/StandupPage';
 import Reports from './pages/Reports';
 import SprintSummary from './pages/SprintSummary';
 import Settings from './pages/Settings';
+import PokerRoomPage from './pages/PokerRoomPage';
 
 function App() {
   return (
@@ -43,6 +44,8 @@ function App() {
             <Route path="/backlog" element={<Backlog />} />
             <Route path="/board" element={<BoardPage />} />
             <Route path="/settings" element={<Settings />} />
+            {/* US-033: PLANNING POKER ROOM */}
+            <Route path="/poker/:roomCode" element={<PokerRoomPage />} />
           </Routes>
         </NotificationProvider>
       </SidebarProvider>

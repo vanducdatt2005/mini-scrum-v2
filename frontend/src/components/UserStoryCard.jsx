@@ -1,6 +1,9 @@
 //frontend/src/components/UserStoryCard.jsx
 import React, { useState } from 'react';
-import { getAvatarUrl } from '../services/api';
+import { useNavigate } from 'react-router-dom';
+import { toast } from 'react-hot-toast';
+import { getAvatarUrl, createPokerRoom } from '../services/api';
+import PokerInviteModal from './PokerInviteModal';
 
 const priorityConfig = {
   HIGH: "bg-error text-on-error",
@@ -41,6 +44,34 @@ export default function UserStoryCard({
   const isSprint = variant === "sprint";
   const isManagement = userRole === "PO" || userRole === "SM";
   const [showDetails, setShowDetails] = useState(false);
+  const [isPokerModalOpen, setIsPokerModalOpen] = useState(false);
+  const [pokerRoom, setPokerRoom] = useState(null);
+  const [isCreatingPoker, setIsCreatingPoker] = useState(false);
+  const navigate = useNavigate();
+
+  const handlePokerClick = async () => {
+    try {
+      setIsCreatingPoker(true);
+      const res = await createPokerRoom(id);
+      if (res.data?.isExisting) {
+        // Phòng đã có sẵn -> Vào thẳng phòng luôn!
+        navigate(`/poker/${res.data.room.roomCode}`);
+      } else {
+        // Phòng vừa mới mở -> Hiện modal mã/link mời
+        setPokerRoom(res.data.room);
+        setIsPokerModalOpen(true);
+        toast.success('Đã mở phòng Planning Poker cho Story này!');
+      }
+    } catch (err) {
+      if (err.response?.data?.roomCode) {
+        navigate(`/poker/${err.response.data.roomCode}`);
+      } else {
+        toast.error(err.response?.data?.error || 'Không thể mở phòng Poker.');
+      }
+    } finally {
+      setIsCreatingPoker(false);
+    }
+  };
 
   const tagList = Array.isArray(tags) 
     ? tags 
@@ -114,8 +145,22 @@ export default function UserStoryCard({
               </div>
             </div>
 
-            {/* Right Side Icons (Comments + Actions + Avatar) */}
-            <div className="flex items-center gap-2">
+            {/* Right Side Icons (Poker + Comments + Lịch sử + Actions + Avatar) */}
+            <div className="flex items-center gap-1.5 md:gap-2">
+              {/* Nút Planning Poker trực tiếp */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handlePokerClick();
+                }}
+                disabled={isCreatingPoker}
+                className="flex items-center gap-1 bg-gradient-to-r from-purple-500/10 to-indigo-500/10 hover:from-purple-600 hover:to-indigo-600 text-purple-700 hover:text-white px-2 py-0.5 rounded-lg border border-purple-500/30 transition-all cursor-pointer font-bold text-[10px] md:text-xs shadow-xs"
+                title="Mở phòng Planning Poker cho Story này (Scrum Master)"
+              >
+                <span className="material-symbols-outlined text-[14px]">style</span>
+                <span>{isCreatingPoker ? "..." : "Poker"}</span>
+              </button>
+
               {/* Comments */}
               <div 
                 className="flex items-center gap-1 text-primary bg-primary/5 px-2 py-0.5 rounded-lg border border-primary/20 hover:bg-primary/10 transition-colors cursor-pointer"
@@ -126,14 +171,13 @@ export default function UserStoryCard({
                 <span className="text-[10px] font-bold">{comments.length}</span>
               </div>
 
-              {/* Lịch sử hoạt động (Activity Log) */}
+              {/* Lịch sử hoạt động (Activity Log) - Thu gọn thành icon để không gây nhầm lẫn */}
               <div 
-                className="flex items-center gap-1 text-on-surface-variant/80 bg-surface-container-high hover:bg-surface-container-highest px-2 py-0.5 rounded-lg border border-outline-variant/30 hover:text-primary hover:border-primary/40 transition-colors cursor-pointer"
-                title="Lịch sử hoạt động (Activity Log)"
+                className="flex items-center justify-center w-7 h-6 text-on-surface-variant/80 bg-surface-container-high hover:bg-surface-container-highest rounded-lg border border-outline-variant/30 hover:text-primary hover:border-primary/40 transition-colors cursor-pointer"
+                title="Xem Lịch sử hoạt động & thay đổi của Story"
                 onClick={(e) => { e.stopPropagation(); onEdit?.({ id, title, description, priority, storyPoints, assignee, tags, comments, defaultTab: 'activity' }); }}
               >
                 <span className="material-symbols-outlined text-[14px]">manage_history</span>
-                <span className="text-[10px] font-bold hidden sm:inline">Lịch sử</span>
               </div>
 
               {/* Actions */}
@@ -239,6 +283,12 @@ export default function UserStoryCard({
             </div>
           </div>
         )}
+        {/* Modal mời vào phòng Poker */}
+        <PokerInviteModal
+          isOpen={isPokerModalOpen}
+          onClose={() => setIsPokerModalOpen(false)}
+          room={pokerRoom}
+        />
       </div>
     );
   }
@@ -337,51 +387,64 @@ export default function UserStoryCard({
         </div>
       )}
 
-      <div className="flex items-center justify-between mt-1">
-        <div className="flex items-center gap-3">
+      <div className="flex items-center justify-between mt-2 gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <div
-            className={`text-[10px] px-3 py-1 rounded-full font-black uppercase tracking-widest border ${priorityConfig[priority] || priorityConfig.MEDIUM}`}
+            className={`text-[10px] px-2.5 py-0.5 rounded-full font-black uppercase tracking-wider border ${priorityConfig[priority] || priorityConfig.MEDIUM}`}
           >
             {priority}
           </div>
 
           <div
-            className={`px-3 py-1 rounded-lg text-sm font-bold flex items-center gap-1 ${
+            className={`px-2 py-0.5 rounded-lg text-xs font-bold flex items-center gap-1 ${
               storyPoints && storyPoints > 0
                 ? "bg-primary/10 text-primary border border-primary/30"
                 : "bg-surface-container text-on-surface-variant"
             }`}
             title="Story Points"
           >
-            <span className="material-symbols-outlined text-base">star</span>
+            <span className="material-symbols-outlined text-xs">star</span>
             {storyPoints || 0}
           </div>
 
           {/* US-045: Comments */}
           <div 
-            className="flex items-center gap-1 text-primary bg-primary/5 px-3 py-1 rounded-lg border border-primary/20 hover:bg-primary/10 transition-colors cursor-pointer"
-            title={`${comments.length} bình luận (bấm để xem & gửi bình luận)`}
+            className="flex items-center gap-1 text-primary bg-primary/5 px-2 py-0.5 rounded-lg border border-primary/20 hover:bg-primary/10 transition-colors cursor-pointer"
+            title={`${comments.length} bình luận`}
             onClick={(e) => { e.stopPropagation(); onEdit?.({ id, title, description, priority, storyPoints, assignee, tags, comments, defaultTab: 'comments' }); }}
           >
-            <span className="material-symbols-outlined text-base">forum</span>
-            <span className="text-sm font-bold">{comments.length}</span>
+            <span className="material-symbols-outlined text-xs">forum</span>
+            <span className="text-xs font-bold">{comments.length}</span>
           </div>
 
-          {/* Lịch sử hoạt động (Activity Log) */}
+          {/* Nút Planning Poker trực tiếp */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handlePokerClick();
+            }}
+            disabled={isCreatingPoker}
+            className="flex items-center gap-1 bg-gradient-to-r from-purple-500/10 to-indigo-500/10 hover:from-purple-600 hover:to-indigo-600 text-purple-700 hover:text-white px-2 py-0.5 rounded-lg border border-purple-500/30 transition-all cursor-pointer font-bold text-xs shadow-xs"
+            title="Mở phòng Planning Poker cho Story này (Scrum Master)"
+          >
+            <span className="material-symbols-outlined text-xs">style</span>
+            <span>{isCreatingPoker ? "..." : "Poker"}</span>
+          </button>
+
+          {/* Lịch sử hoạt động (Activity Log) - Thu gọn thành icon để không làm vỡ layout Card */}
           <div 
-            className="flex items-center gap-1 text-on-surface-variant hover:text-primary bg-surface-container hover:bg-surface-container-high px-3 py-1 rounded-lg border border-outline-variant/30 hover:border-primary/40 transition-colors cursor-pointer"
-            title="Lịch sử thay đổi (Activity Log)"
+            className="flex items-center justify-center w-6 h-6 rounded-lg text-on-surface-variant/70 hover:text-primary bg-surface-container hover:bg-surface-container-high border border-outline-variant/30 hover:border-primary/40 transition-colors cursor-pointer"
+            title="Xem Lịch sử hoạt động & thay đổi của Story"
             onClick={(e) => { e.stopPropagation(); onEdit?.({ id, title, description, priority, storyPoints, assignee, tags, comments, defaultTab: 'activity' }); }}
           >
-            <span className="material-symbols-outlined text-base">manage_history</span>
-            <span className="text-sm font-bold">Lịch sử</span>
+            <span className="material-symbols-outlined text-xs">manage_history</span>
           </div>
         </div>
 
-        <div className="relative" onClick={(e) => e.stopPropagation()}>
+        <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
           {assignee?.fullName ? (
             <div 
-              className="w-8 h-8 rounded-full overflow-hidden bg-primary flex items-center justify-center text-on-primary font-bold text-sm shadow-sm"
+              className="w-7 h-7 rounded-full overflow-hidden bg-primary flex items-center justify-center text-on-primary font-bold text-xs shadow-sm"
               title={assignee.fullName}
             >
               {assignee.avatar ? (
@@ -396,14 +459,14 @@ export default function UserStoryCard({
             </div>
           ) : isManagement ? (
             <div 
-              className="w-8 h-8 rounded-full bg-surface-container flex items-center justify-center cursor-pointer hover:bg-primary/20 hover:text-primary transition-colors text-outline border border-dashed border-outline-variant/30"
+              className="w-7 h-7 rounded-full bg-surface-container flex items-center justify-center cursor-pointer hover:bg-primary/20 hover:text-primary transition-colors text-outline border border-dashed border-outline-variant/30"
               title="Gán thành viên"
             >
-              <span className="material-symbols-outlined text-sm">person_add</span>
+              <span className="material-symbols-outlined text-xs">person_add</span>
             </div>
           ) : (
-            <div className="w-8 h-8 rounded-full bg-surface-container flex items-center justify-center text-outline opacity-50 border border-outline-variant/10">
-              <span className="material-symbols-outlined text-sm">person</span>
+            <div className="w-7 h-7 rounded-full bg-surface-container flex items-center justify-center text-outline opacity-50 border border-outline-variant/10">
+              <span className="material-symbols-outlined text-xs">person</span>
             </div>
           )}
 
@@ -427,6 +490,13 @@ export default function UserStoryCard({
           )}
         </div>
       </div>
+
+      {/* Modal mời vào phòng Poker */}
+      <PokerInviteModal
+        isOpen={isPokerModalOpen}
+        onClose={() => setIsPokerModalOpen(false)}
+        room={pokerRoom}
+      />
     </div>
   );
 }

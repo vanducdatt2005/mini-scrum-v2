@@ -48,6 +48,9 @@ export default function Settings() {
         if (data.avatar) {
           setAvatarPreview(getAvatarUrl(data.avatar));
         }
+        if (updateUser) {
+          updateUser(data);
+        }
       } catch (err) {
         toast.error('Không thể tải thông tin cá nhân.');
         console.error(err);

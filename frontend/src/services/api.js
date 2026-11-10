@@ -137,4 +137,12 @@ export const getAvatarUrl = (avatarPath) => {
   return `${backendBase}${avatarPath}`;
 };
 
+
+// PLANNING POKER (US-033)
+export const createPokerRoom = (storyId) => api.post(`/userstory/${storyId}/poker-room`);
+export const getPokerRoom = (roomCodeOrId) => api.get(`/poker-room/${roomCodeOrId}`);
+export const getStoryPokerRoom = (storyId) => api.get(`/userstory/${storyId}/poker-room`);
+export const closePokerRoom = (roomId) => api.post(`/poker-room/${roomId}/close`);
+export const savePokerEstimate = (roomId, storyPoints) => api.post(`/poker-room/${roomId}/save-estimate`, { storyPoints });
+
 export default api;

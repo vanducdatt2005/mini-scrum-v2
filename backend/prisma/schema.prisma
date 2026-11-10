@@ -23,6 +23,7 @@ model User {
   attachments     Attachment[]
   notificationsReceived Notification[] @relation("ReceivedNotifications")
   notificationsSent     Notification[] @relation("SentNotifications")
+  createdPokerRooms     PokerRoom[]    @relation("CreatedPokerRooms")
   contributions   MemberContribution[] // Đóng góp trong các Sprint
   activityLogs    ActivityLog[]        @relation("ActorActivityLogs")
 }
@@ -40,6 +41,7 @@ model Project {
   standups    DailyStandup[]
   notifications Notification[]
   activityLogs  ActivityLog[]
+  pokerRooms    PokerRoom[]
 }
 
 model ProjectMember {
@@ -90,6 +92,7 @@ model UserStory {
   updatedAt    DateTime?   @updatedAt
   statusHistory UserStoryStatusHistory[]
   priorityOrder Int @default(0)
+  pokerRooms    PokerRoom[]
 }
 
 model UserStoryStatusHistory {
@@ -288,4 +291,24 @@ model ActivityLog {
   @@index([projectId, createdAt(sort: Desc)])
   @@index([entityType, entityId, createdAt(sort: Desc)])
   @@map("activity_logs")
+}
+
+
+model PokerRoom {
+  id          String    @id @default(cuid())
+  roomCode    String    @unique
+  name        String
+  status      String    @default("ACTIVE") // ACTIVE, CLOSED
+  storyId     String
+  userStory   UserStory @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdById String
+  createdBy   User      @relation("CreatedPokerRooms", fields: [createdById], references: [id])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([storyId])
+  @@index([projectId])
+  @@index([roomCode])
 }

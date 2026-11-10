@@ -4,6 +4,9 @@ import CommentSection from './CommentSection';
 import AttachmentSection from './AttachmentSection'; 
 import ActivityLog from './ActivityLog';
 import { useAuth } from '../context/AuthContext';
+import PokerInviteModal from './PokerInviteModal';
+import { createPokerRoom } from '../services/api';
+import { toast } from 'react-hot-toast';
 
 export default function CreateStoryModal({ 
   isOpen, 
@@ -38,6 +41,25 @@ export default function CreateStoryModal({
   });
 
   const [tagInput, setTagInput] = useState('');
+  const [pokerRoom, setPokerRoom] = useState(null);
+  const [isPokerModalOpen, setIsPokerModalOpen] = useState(false);
+  const [isCreatingPoker, setIsCreatingPoker] = useState(false);
+
+  const handleOpenPoker = async () => {
+    if (!initialData?.id) return;
+    setIsCreatingPoker(true);
+    try {
+      const res = await createPokerRoom(initialData.id);
+      setPokerRoom(res.data.room);
+      setIsPokerModalOpen(true);
+      toast.success('Đã mở phòng Planning Poker cho Story này!');
+    } catch (err) {
+      console.error('Lỗi mở phòng Poker:', err);
+      toast.error(err.response?.data?.error || 'Không thể mở phòng Poker. Bạn cần là Scrum Master hoặc PO.');
+    } finally {
+      setIsCreatingPoker(false);
+    }
+  };
 
   useEffect(() => {
     if (initialData) {
@@ -124,13 +146,27 @@ export default function CreateStoryModal({
               )}
             </div>
           </div>
-          <button 
-            type="button"
-            onClick={onClose} 
-            className="p-2 hover:bg-surface-container-high rounded-full transition-colors"
-          >
-            <span className="material-symbols-outlined">close</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {isEdit && initialData?.id && (
+              <button
+                type="button"
+                onClick={handleOpenPoker}
+                disabled={isCreatingPoker}
+                className="px-3 py-1.5 bg-gradient-to-r from-primary to-indigo-600 hover:from-primary/90 text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center gap-1.5"
+                title="Mở phòng Planning Poker cho User Story này"
+              >
+                <span className="material-symbols-outlined text-sm">style</span>
+                <span>{isCreatingPoker ? "Đang tạo..." : "Mở Poker"}</span>
+              </button>
+            )}
+            <button 
+              type="button"
+              onClick={onClose} 
+              className="p-2 hover:bg-surface-container-high rounded-full transition-colors"
+            >
+              <span className="material-symbols-outlined">close</span>
+            </button>
+          </div>
         </div>
 
         <div className="p-6 space-y-6 overflow-y-auto flex-1">
@@ -369,6 +405,14 @@ export default function CreateStoryModal({
           
         </div>
       </div>
+
+      {/* Modal mời vào phòng Poker */}
+      <PokerInviteModal
+        isOpen={isPokerModalOpen}
+        onClose={() => setIsPokerModalOpen(false)}
+        room={pokerRoom}
+        storyTitle={initialData?.title}
+      />
     </div>
   );
 }

@@ -829,7 +829,7 @@ app.get("/api/userstory/:id", async (req, res) => {
         project: true,
         assignee: { select: { fullName: true, email: true, avatar: true } },
         comments: {
-          include: { user: { select: { fullName: true, email: true } } },
+          include: { user: { select: { id: true, fullName: true, email: true, avatar: true } } },
           orderBy: { createdAt: "asc" }
         }
       },
@@ -847,7 +847,7 @@ app.get("/api/userstory/:id/comments", async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     const comments = await prisma.comment.findMany({
       where: { userStoryId: req.params.id },
-      include: { user: { select: { fullName: true, email: true } } },
+      include: { user: { select: { id: true, fullName: true, email: true, avatar: true } } },
       orderBy: { createdAt: "asc" }
     });
     res.json(comments);
@@ -868,7 +868,7 @@ app.post("/api/userstory/:id/comments", authMiddleware, async (req, res) => {
         userStoryId: req.params.id,
         userId: req.user.userId
       },
-      include: { user: { select: { fullName: true, email: true } } }
+      include: { user: { select: { id: true, fullName: true, email: true, avatar: true } } }
     });
 
     const story = await prisma.userStory.findUnique({ where: { id: req.params.id }, select: { projectId: true, title: true } });
@@ -1692,6 +1692,268 @@ app.post("/api/project/:projectId/members/seed", async (req, res) => {
   }
 });
 
+
+// =========================================================================
+// PLANNING POKER API (US-033: MỞ PHÒNG POKER CHO USER STORY)
+// =========================================================================
+
+// Helper sinh mã phòng 6 ký tự ngẫu nhiên độc nhất (VD: PKR-7X89)
+function generatePokerRoomCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = 'PKR-';
+  for (let i = 0; i < 5; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
+
+// 1. AC1: MỞ PHÒNG POKER GẮN VỚI MỘT USER STORY (Chỉ Scrum Master hoặc PO)
+app.post("/api/userstory/:storyId/poker-room", authMiddleware, async (req, res) => {
+  const { storyId } = req.params;
+  const userId = req.user.userId;
+
+  try {
+    // Kiểm tra User Story tồn tại
+    const story = await prisma.userStory.findUnique({
+      where: { id: storyId },
+      include: {
+        project: { select: { id: true, name: true } }
+      }
+    });
+
+    if (!story) {
+      return res.status(404).json({ error: "Không tìm thấy User Story" });
+    }
+
+    const projectId = story.projectId;
+
+    // Kiểm tra thành viên thuộc dự án
+    const member = await prisma.projectMember.findUnique({
+      where: { userId_projectId: { userId, projectId } }
+    });
+
+    if (!member) {
+      return res.status(403).json({
+        error: "Bạn không phải thành viên của dự án này."
+      });
+    }
+
+    // Kiểm tra xem đã có phòng ACTIVE cho story này chưa
+    let room = await prisma.pokerRoom.findFirst({
+      where: { storyId, status: 'ACTIVE' },
+      include: {
+        userStory: {
+          select: { id: true, title: true, description: true, storyPoints: true, priority: true }
+        },
+        project: { select: { id: true, name: true } },
+        createdBy: { select: { id: true, fullName: true, email: true, avatar: true } }
+      }
+    });
+
+    // Nếu đã có phòng đang mở, trả về phòng cho thành viên vào
+    if (room) {
+      return res.json({
+        message: "Phòng Poker đang hoạt động",
+        room: {
+          ...room,
+          joinPath: `/poker/${room.roomCode}`
+        },
+        isExisting: true
+      });
+    }
+
+    // Nếu chưa có phòng active, chỉ Scrum Master (SM) hoặc Product Owner (PO) mới được tạo phòng mới
+    if (member.role !== 'SM' && member.role !== 'PO') {
+      return res.status(403).json({
+        error: "Chưa có phòng Poker nào được mở cho Story này. Vui lòng nhờ Scrum Master hoặc PO mở phòng."
+      });
+    }
+
+    // Nếu chưa có phòng active, tạo phòng mới
+    if (!room) {
+      let roomCode;
+      let isUnique = false;
+      let attempts = 0;
+
+      while (!isUnique && attempts < 10) {
+        roomCode = generatePokerRoomCode();
+        const existing = await prisma.pokerRoom.findUnique({ where: { roomCode } });
+        if (!existing) isUnique = true;
+        attempts++;
+      }
+
+      room = await prisma.pokerRoom.create({
+        data: {
+          roomCode,
+          name: `Poker: ${story.title}`,
+          status: 'ACTIVE',
+          storyId: story.id,
+          projectId: story.projectId,
+          createdById: userId
+        },
+        include: {
+          userStory: {
+            select: { id: true, title: true, description: true, storyPoints: true, priority: true }
+          },
+          project: { select: { id: true, name: true } },
+          createdBy: { select: { id: true, fullName: true, email: true, avatar: true } }
+        }
+      });
+    }
+
+    res.status(201).json({
+      message: "Mở phòng Poker thành công",
+      room,
+      roomCode: room.roomCode,
+      joinPath: `/poker/${room.roomCode}`
+    });
+  } catch (err) {
+    console.error("Lỗi khi mở phòng Poker:", err);
+    res.status(500).json({ error: "Lỗi hệ thống khi mở phòng Poker: " + err.message });
+  }
+});
+
+// 2. AC2: VÀO PHÒNG POKER THEO MÃ/ID & KIỂM TRA QUYỀN PROJECT
+app.get("/api/poker-room/:roomCodeOrId", authMiddleware, async (req, res) => {
+  const { roomCodeOrId } = req.params;
+  const userId = req.user.userId;
+
+  try {
+    const room = await prisma.pokerRoom.findFirst({
+      where: {
+        OR: [
+          { roomCode: roomCodeOrId.toUpperCase() },
+          { id: roomCodeOrId }
+        ]
+      },
+      include: {
+        userStory: {
+          include: {
+            assignee: { select: { id: true, fullName: true, email: true, avatar: true } },
+            tasks: { select: { id: true, title: true, status: true } }
+          }
+        },
+        project: {
+          select: { id: true, name: true }
+        },
+        createdBy: {
+          select: { id: true, fullName: true, email: true, avatar: true }
+        }
+      }
+    });
+
+    if (!room) {
+      return res.status(404).json({ error: "Phòng Poker không tồn tại hoặc mã phòng không chính xác." });
+    }
+
+    // AC2: KIỂM TRA BẢO MẬT — TỪ CHỐI NGƯỜI NGOÀI PROJECT
+    const member = await prisma.projectMember.findUnique({
+      where: { userId_projectId: { userId, projectId: room.projectId } }
+    });
+
+    if (!member) {
+      return res.status(403).json({
+        error: "Bạn không phải thành viên của dự án này! Chỉ thành viên thuộc dự án mới được tham gia phòng Poker.",
+        isAccessDenied: true,
+        projectName: room.project.name
+      });
+    }
+
+    // Kiểm tra phòng có active không
+    if (room.status !== 'ACTIVE') {
+      return res.status(400).json({
+        error: "Phòng Poker này đã kết thúc hoặc không còn hoạt động.",
+        status: room.status
+      });
+    }
+
+    res.json({
+      room,
+      userRole: member.role,
+      isModerator: member.role === 'SM' || member.role === 'PO' || room.createdById === userId
+    });
+  } catch (err) {
+    console.error("Lỗi khi truy cập phòng Poker:", err);
+    res.status(500).json({ error: "Lỗi hệ thống: " + err.message });
+  }
+});
+
+// 3. LẤY PHÒNG POKER ĐANG ACTIVE CỦA MỘT USER STORY (Nếu có)
+app.get("/api/userstory/:storyId/poker-room", authMiddleware, async (req, res) => {
+  const { storyId } = req.params;
+
+  try {
+    const room = await prisma.pokerRoom.findFirst({
+      where: { storyId, status: 'ACTIVE' },
+      include: {
+        createdBy: { select: { id: true, fullName: true, email: true, avatar: true } }
+      }
+    });
+
+    res.json({ activeRoom: room || null });
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi lấy thông tin phòng Poker: " + err.message });
+  }
+});
+
+// 4. ĐÓNG PHÒNG POKER (Chỉ SM/PO hoặc người tạo phòng)
+app.post("/api/poker-room/:id/close", authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.userId;
+
+  try {
+    const room = await prisma.pokerRoom.findUnique({ where: { id } });
+    if (!room) return res.status(404).json({ error: "Phòng Poker không tồn tại" });
+
+    const member = await prisma.projectMember.findUnique({
+      where: { userId_projectId: { userId, projectId: room.projectId } }
+    });
+
+    if (!member || (member.role !== 'SM' && member.role !== 'PO' && room.createdById !== userId)) {
+      return res.status(403).json({ error: "Bạn không có quyền đóng phòng Poker này" });
+    }
+
+    const updated = await prisma.pokerRoom.update({
+      where: { id },
+      data: { status: 'CLOSED' }
+    });
+
+    res.json({ message: "Đã đóng phòng Poker", room: updated });
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi đóng phòng Poker: " + err.message });
+  }
+});
+
+// 5. LƯU KẾT QUẢ STORY POINTS TỪ PHÒNG POKER VÀO USER STORY
+app.post("/api/poker-room/:id/save-estimate", authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { storyPoints } = req.body;
+  const userId = req.user.userId;
+
+  try {
+    const room = await prisma.pokerRoom.findUnique({ where: { id } });
+    if (!room) return res.status(404).json({ error: "Phòng Poker không tồn tại" });
+
+    const member = await prisma.projectMember.findUnique({
+      where: { userId_projectId: { userId, projectId: room.projectId } }
+    });
+
+    if (!member || (member.role !== 'SM' && member.role !== 'PO' && room.createdById !== userId)) {
+      return res.status(403).json({ error: "Chỉ Scrum Master hoặc PO mới có quyền lưu điểm estimate" });
+    }
+
+    const points = parseInt(storyPoints, 10);
+    const updatedStory = await prisma.userStory.update({
+      where: { id: room.storyId },
+      data: { storyPoints: isNaN(points) ? null : points }
+    });
+
+    res.json({ message: "Lưu điểm estimate thành công", story: updatedStory });
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi khi lưu điểm estimate: " + err.message });
+  }
+});
+
 // === TASK API ===
 
 // US-020: TẠO TASK CHO USER STORY
@@ -1958,7 +2220,7 @@ app.patch("/api/tasks/:id/assign", authMiddleware, async (req, res) => {
       if (result.count === 0) {
         const latestTask = await prisma.task.findUnique({
           where: { id: req.params.id },
-          include: { assignee: { select: { id: true, fullName: true, email: true } }, userStory: { select: { projectId: true } } }
+          include: { assignee: { select: { id: true, fullName: true, email: true, avatar: true } }, userStory: { select: { projectId: true } } }
         });
         if (!latestTask) return res.status(404).json({ error: "Không tìm thấy Task" });
         const updatedByName = latestTask.assignee?.fullName || latestTask.assignee?.email || "Người dùng khác";
@@ -1972,7 +2234,7 @@ app.patch("/api/tasks/:id/assign", authMiddleware, async (req, res) => {
 
       const updated = await prisma.task.findUnique({
         where: { id: req.params.id },
-        include: { assignee: { select: { id: true, fullName: true, email: true } }, userStory: { select: { projectId: true } } }
+        include: { assignee: { select: { id: true, fullName: true, email: true, avatar: true } }, userStory: { select: { projectId: true } } }
       });
       return res.json({ message: "Gán thành viên thành công", task: { ...updated, updated_at: updated.updatedAt } });
     }
@@ -2050,7 +2312,7 @@ app.get("/api/userstory/:storyId/tasks", authMiddleware, async (req, res) => {
   try {
     const tasks = await prisma.task.findMany({
       where: { storyId },
-      include: { assignee: { select: { id: true, fullName: true, email: true } } },
+      include: { assignee: { select: { id: true, fullName: true, email: true, avatar: true } } },
       orderBy: { createdAt: "asc" }
     });
     res.json(tasks);

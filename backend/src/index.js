@@ -146,6 +146,7 @@ app.post("/api/login", async (req, res) => {
         email: user.email,
         fullName: user.fullName,
         role: user.role,
+        avatar: user.avatar,
       },
     });
   } catch (err) {
@@ -183,7 +184,7 @@ app.post("/api/auth/refresh", async (req, res) => {
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
-      select: { id: true, email: true, fullName: true, role: true }
+      select: { id: true, email: true, fullName: true, role: true, avatar: true }
     });
 
     if (!user) {

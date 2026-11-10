@@ -7,7 +7,7 @@ import { toast } from 'react-hot-toast';
 
 export default function Settings() {
   const navigate = useNavigate();
-  const { user, login } = useAuth() || {};
+  const { user, login, updateUser } = useAuth() || {};
   
   // Profile state
   const [profileData, setProfileData] = useState({
@@ -203,12 +203,19 @@ export default function Settings() {
       if (success) {
         toast.success('Cập nhật thông tin cá nhân thành công!');
         // Update reactive Auth Context if user updated profile info
-        if (updatedUser && login) {
-          login({
-            ...user,
-            fullName: updatedUser.fullName,
-            avatar: updatedUser.avatar
-          });
+        if (updatedUser) {
+          if (updateUser) {
+            updateUser({
+              fullName: updatedUser.fullName,
+              avatar: updatedUser.avatar
+            });
+          } else if (login) {
+            login({
+              ...user,
+              fullName: updatedUser.fullName,
+              avatar: updatedUser.avatar
+            });
+          }
         }
       }
     } catch (err) {

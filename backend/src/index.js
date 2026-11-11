@@ -17,6 +17,7 @@ const sprintCeremonyRoutes = require('./routes/sprintCeremonyRoutes');
 const sprintSummaryRoutes  = require('./routes/sprintSummaryRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const activityRoutes = require('./routes/activityRoutes');
+const retroRoutes = require('./routes/retroRoutes');
 const { recordActivity, diffAndRecord, logActivity } = require('./services/activityService');
 const { sendTaskAssignmentNotification } = require('./services/notificationService');
 
@@ -68,6 +69,7 @@ app.use('/api', commentRoutes);
 app.use('/api/attachments', attachmentRoutes);
 app.use('/api', notificationRoutes);
 app.use('/api', activityRoutes);
+app.use('/api', retroRoutes);
 
 
 // Middleware auth (dùng cho tất cả route cần quyền)

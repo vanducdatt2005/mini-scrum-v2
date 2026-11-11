@@ -26,6 +26,8 @@ model User {
   createdPokerRooms     PokerRoom[]    @relation("CreatedPokerRooms")
   contributions   MemberContribution[] // Đóng góp trong các Sprint
   activityLogs    ActivityLog[]        @relation("ActorActivityLogs")
+  retroSessions   RetroSession[]       @relation("CreatedRetroSessions")
+  retroNotes      RetroNote[]          @relation("AuthoredRetroNotes")
 }
 
 model Project {
@@ -42,6 +44,7 @@ model Project {
   notifications Notification[]
   activityLogs  ActivityLog[]
   pokerRooms    PokerRoom[]
+  retroSessions RetroSession[]
 }
 
 model ProjectMember {
@@ -68,6 +71,7 @@ model Sprint {
   stories   UserStory[]
   createdAt DateTime       @default(now())
   summary   SprintSummary? // Kết quả tổng kết Sprint
+  retroSessions RetroSession[]
 }
 
 model UserStory {
@@ -311,4 +315,35 @@ model PokerRoom {
   @@index([storyId])
   @@index([projectId])
   @@index([roomCode])
+}
+
+model RetroSession {
+  id          String      @id @default(cuid())
+  projectId   String
+  sprintId    String?
+  title       String
+  status      String      @default("OPEN") // OPEN, CLOSED
+  createdById String
+  createdAt   DateTime    @default(now())
+
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sprint      Sprint?     @relation(fields: [sprintId], references: [id], onDelete: SetNull)
+  createdBy   User        @relation("CreatedRetroSessions", fields: [createdById], references: [id])
+  notes       RetroNote[]
+
+  @@index([projectId])
+}
+
+model RetroNote {
+  id        String       @id @default(cuid())
+  sessionId String
+  column    String       // WENT_WELL, TO_IMPROVE, ACTION_ITEM
+  content   String
+  authorId  String
+  createdAt DateTime     @default(now())
+
+  session   RetroSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  author    User         @relation("AuthoredRetroNotes", fields: [authorId], references: [id])
+
+  @@index([sessionId])
 }

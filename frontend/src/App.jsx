@@ -18,6 +18,7 @@ import Reports from './pages/Reports';
 import SprintSummary from './pages/SprintSummary';
 import Settings from './pages/Settings';
 import PokerRoomPage from './pages/PokerRoomPage';
+import RetroPage from './pages/RetroPage';
 
 function App() {
   return (
@@ -38,6 +39,8 @@ function App() {
             <Route path="/projects/:projectId/tasks/:taskId" element={<BoardPage />} />
             <Route path="/projects/:projectId/members" element={<ManageMembers />} />
             <Route path="/projects/:projectId/standup" element={<StandupPage />} />
+            <Route path="/projects/:projectId/retro" element={<RetroPage />} />
+            <Route path="/projects/:projectId/retro/:retroId" element={<RetroPage />} />
             <Route path="/projects/:projectId/reports" element={<Reports />} />
             <Route path="/projects/:projectId/sprints/:sprintId/summary" element={<SprintSummary />} />
             <Route path="/projects/:id/edit" element={<EditProject />} />

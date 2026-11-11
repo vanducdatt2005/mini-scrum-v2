@@ -145,4 +145,11 @@ export const getStoryPokerRoom = (storyId) => api.get(`/userstory/${storyId}/pok
 export const closePokerRoom = (roomId) => api.post(`/poker-room/${roomId}/close`);
 export const savePokerEstimate = (roomId, storyPoints) => api.post(`/poker-room/${roomId}/save-estimate`, { storyPoints });
 
+// RETROSPECTIVE (SCRUM-73)
+export const getProjectRetros = (projectId) => api.get(`/projects/${projectId}/retros`);
+export const createProjectRetro = (projectId, data) => api.post(`/projects/${projectId}/retros`, data);
+export const getRetroDetails = (retroId) => api.get(`/retros/${retroId}`);
+export const addRetroNote = (retroId, data) => api.post(`/retros/${retroId}/notes`, data);
+export const updateRetroSession = (retroId, data) => api.patch(`/retros/${retroId}`, data);
+
 export default api;

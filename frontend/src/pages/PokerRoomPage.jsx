@@ -5,8 +5,8 @@ import { getSocket } from '../context/SocketContext';
 import { getPokerRoom, closePokerRoom, savePokerEstimate, getAvatarUrl } from '../services/api';
 import { toast } from 'react-hot-toast';
 
-// Bộ bài Planning Poker chuẩn Fibonacci
-const POKER_CARDS = ['0', '0.5', '1', '2', '3', '5', '8', '13', '20', '40', '100', '?', '☕'];
+// Bộ bài Planning Poker chuẩn Fibonacci theo yêu cầu US-034
+const POKER_CARDS = ['0', '1', '2', '3', '5', '8', '13', '20', '?', '☕'];
 
 export default function PokerRoomPage() {
   const { roomCode } = useParams();
@@ -104,17 +104,30 @@ export default function PokerRoomPage() {
       }
     };
 
+    // Lắng nghe xác nhận lá bài riêng của chính mình từ server
+    const handleYourVote = (data) => {
+      if (data && 'vote' in data) {
+        setMyVote(data.vote);
+      }
+    };
+
     socket.on('poker:stateUpdate', handleStateUpdate);
+    socket.on('poker:yourVote', handleYourVote);
 
     return () => {
       socket.emit('poker:leave', { roomCode: cleanCode });
       socket.off('poker:stateUpdate', handleStateUpdate);
+      socket.off('poker:yourVote', handleYourVote);
     };
   }, [roomData, currentUser, roomCode]);
 
-  // Hành động vote bài
+  // AC1 & AC2: Hành động chọn một lá bài và đổi lá bài trước khi Reveal
   const handleSelectCard = (card) => {
-    if (isRevealed) return; // Không vote khi đã lật bài
+    if (isRevealed) {
+      toast.error('Vòng đánh giá đã lật bài, không thể chọn hoặc đổi lá bài lúc này!');
+      return;
+    }
+    const isChanging = myVote !== null && myVote !== card;
     const newVote = myVote === card ? null : card;
     setMyVote(newVote);
 
@@ -123,6 +136,14 @@ export default function PokerRoomPage() {
       roomCode: roomCode.toUpperCase().trim(),
       vote: newVote
     });
+
+    if (newVote === null) {
+      toast('Đã hủy chọn lá bài', { icon: '↩️' });
+    } else if (isChanging) {
+      toast.success(`Đã đổi lựa chọn sang lá: ${card}`, { id: 'poker-vote' });
+    } else {
+      toast.success(`Đã chọn lá: ${card} (ẩn với người khác)`, { id: 'poker-vote' });
+    }
   };
 
   // Hành động Lật bài (SM/PO)
@@ -482,12 +503,15 @@ export default function PokerRoomPage() {
             {/* Danh sách các lá bài thành viên trên bàn Poker */}
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 mb-6">
               {members.map((member) => {
-                const isMe = member.userId === currentUser.id;
+                const isMe = member.userId === currentUser?.id;
+                // Kiểm tra xem thành viên này đã vote chưa
+                const hasVoted = isMe ? (myVote !== null && myVote !== undefined) : member.hasVoted;
+
                 return (
                   <div
                     key={member.userId}
                     className={`flex flex-col items-center p-4 rounded-2xl border transition-all ${
-                      member.hasVoted 
+                      hasVoted 
                         ? 'bg-primary/5 border-primary/30 shadow-sm' 
                         : 'bg-surface-container/30 border-outline-variant/15 opacity-80'
                     }`}
@@ -495,14 +519,29 @@ export default function PokerRoomPage() {
                     {/* Lá bài úp hoặc lật */}
                     <div className="w-14 h-20 mb-3 rounded-xl flex items-center justify-center font-black text-xl shadow-md transition-transform duration-300 transform perspective-500">
                       {isRevealed ? (
-                        <div className="w-full h-full rounded-xl bg-white text-primary border-2 border-primary flex items-center justify-center font-mono animate-in zoom-in-75">
+                        /* Đã lật bài: Tất cả mọi người thấy số điểm */
+                        <div className="w-full h-full rounded-xl bg-white text-primary border-2 border-primary flex items-center justify-center font-mono animate-in zoom-in-75 shadow-sm">
                           {member.vote !== null && member.vote !== undefined ? member.vote : '-'}
                         </div>
+                      ) : isMe && myVote ? (
+                        /* AC1: Chưa lật bài nhưng là CHÍNH MÌNH -> Chỉ mình thấy lá đã chọn */
+                        <div 
+                          className="w-full h-full rounded-xl bg-white text-purple-700 border-2 border-purple-500 shadow-md flex flex-col items-center justify-center font-mono relative animate-in zoom-in-90 ring-2 ring-purple-500/20"
+                          title="Lá bài bạn đã chọn (đang ẩn với tất cả thành viên khác)"
+                        >
+                          <span className="text-xl font-black">{myVote}</span>
+                          <span className="text-[7px] font-sans font-bold text-purple-600 tracking-tighter uppercase mt-0.5">Lá của bạn</span>
+                        </div>
                       ) : member.hasVoted ? (
-                        <div className="w-full h-full rounded-xl bg-gradient-to-br from-primary to-primary-container text-white flex items-center justify-center border-2 border-primary/50">
+                        /* AC1: Chưa lật bài & là NGƯỜI KHÁC -> Chỉ thấy lá bài úp bí mật, không thấy số */
+                        <div 
+                          className="w-full h-full rounded-xl bg-gradient-to-br from-primary to-primary-container text-white flex items-center justify-center border-2 border-primary/50 shadow-inner"
+                          title="Thành viên đã chọn bài (đang được ẩn)"
+                        >
                           <span className="material-symbols-outlined text-2xl animate-pulse">style</span>
                         </div>
                       ) : (
+                        /* Chưa chọn bài */
                         <div className="w-full h-full rounded-xl border-2 border-dashed border-outline-variant/40 flex items-center justify-center text-outline text-xs">
                           ...
                         </div>
@@ -523,8 +562,16 @@ export default function PokerRoomPage() {
                       </span>
                     </div>
 
-                    <span className="text-[10px] text-on-surface-variant/70 mt-1">
-                      {member.hasVoted ? 'Đã chọn bài' : 'Đang nghĩ...'}
+                    {/* AC1: Trạng thái hiển thị rõ ràng "Đã vote" với người khác */}
+                    <span className="text-[10px] font-bold mt-1">
+                      {hasVoted ? (
+                        <span className="text-emerald-600 flex items-center gap-0.5">
+                          <span className="material-symbols-outlined text-xs">check_circle</span>
+                          <span>Đã vote</span>
+                        </span>
+                      ) : (
+                        <span className="text-outline/70 italic">Chưa vote</span>
+                      )}
                     </span>
                   </div>
                 );
@@ -540,16 +587,24 @@ export default function PokerRoomPage() {
 
           {/* 2. BỘ BÀI PLANNING POKER CHO NGƯỜI DÙNG CHỌN */}
           <div className="bg-surface-container-lowest p-6 rounded-3xl border border-outline-variant/20 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-[10px] font-black uppercase tracking-wider text-outline">
-                Chọn lá bài của bạn {myVote ? `(Đã chọn: ${myVote})` : ''}
-              </span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+              <div>
+                <div className="text-[10px] font-black uppercase tracking-wider text-outline flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-sm text-primary">style</span>
+                  <span>Chọn lá bài Fibonacci {myVote ? `(Đang chọn: ${myVote})` : ''}</span>
+                </div>
+                <p className="text-[11px] text-on-surface-variant/70 mt-0.5">
+                  Lá bài bạn chọn được ẩn hoàn toàn với các thành viên khác cho đến khi Lật bài.
+                </p>
+              </div>
+
               {myVote && !isRevealed && (
                 <button
                   onClick={() => handleSelectCard(myVote)}
-                  className="text-[11px] font-bold text-error hover:underline"
+                  className="text-[11px] font-bold text-error hover:underline flex items-center gap-1 self-start sm:self-center"
                 >
-                  Bỏ chọn bài
+                  <span className="material-symbols-outlined text-xs">close</span>
+                  <span>Bỏ chọn bài</span>
                 </button>
               )}
             </div>

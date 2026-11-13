@@ -279,14 +279,31 @@ function initSocket(server, prisma) {
       }
 
       const roomState = global.pokerRoomsState.get(cleanCode);
+
+      // Kiểm tra xem user này đã có trong phòng chưa (tránh trùng socket hoặc lưu giữ vote nếu F5/reload)
+      let previousVote = null;
+      let previousHasVoted = false;
+      for (const [sId, m] of roomState.members.entries()) {
+        if (m.userId === user.id) {
+          previousVote = m.vote;
+          previousHasVoted = m.hasVoted;
+          roomState.members.delete(sId);
+        }
+      }
+
       roomState.members.set(socket.id, {
         socketId: socket.id,
         userId: user.id,
         fullName: user.fullName || user.email || 'Thành viên',
         avatar: user.avatar || null,
-        vote: null,
-        hasVoted: false
+        vote: previousVote,
+        hasVoted: previousHasVoted
       });
+
+      // Nếu người dùng đã từng vote trước đó, gửi riêng lại cho socket của họ
+      if (previousHasVoted && previousVote !== null) {
+        socket.emit("poker:yourVote", { vote: previousVote });
+      }
 
       // Phát lại danh sách thành viên hiện tại cho tất cả mọi người trong phòng
       const membersList = Array.from(roomState.members.values()).map(m => ({
@@ -313,10 +330,16 @@ function initSocket(server, prisma) {
         const roomState = global.pokerRoomsState.get(cleanCode);
         const member = roomState.members.get(socket.id);
         if (member) {
-          member.vote = vote;
-          member.hasVoted = vote !== null && vote !== undefined;
+          // AC2: Cho phép chọn hoặc đổi lá trước khi Reveal
+          if (!roomState.isRevealed) {
+            member.vote = vote;
+            member.hasVoted = vote !== null && vote !== undefined;
+            // Gửi xác nhận riêng cho socket của chính người đó
+            socket.emit("poker:yourVote", { vote: member.vote });
+          }
         }
 
+        // AC1: Ẩn lá bài với người khác (vote: null) khi chưa Reveal; người khác CHỈ thấy hasVoted
         const membersList = Array.from(roomState.members.values()).map(m => ({
           userId: m.userId,
           fullName: m.fullName,
@@ -384,6 +407,7 @@ function initSocket(server, prisma) {
           members: membersList,
           isRevealed: false
         });
+        io.to(roomChannel).emit("poker:yourVote", { vote: null });
       }
     });
 

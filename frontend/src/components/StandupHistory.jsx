@@ -5,8 +5,9 @@ export default function StandupHistory({ standups, members }) {
 
     // Group standups by date
     const groupedLogs = standups.reduce((acc, log) => {
-        const dateObj = new Date(log.date);
-        const dateKey = dateObj.toLocaleDateString('vi-VN', {
+        const rawDate = log.reportDate || log.date || log.createdAt;
+        const dateObj = new Date(rawDate);
+        const dateKey = isNaN(dateObj.getTime()) ? 'Gần đây' : dateObj.toLocaleDateString('vi-VN', {
             weekday: 'long',
             year: 'numeric',
             month: 'long',
@@ -98,7 +99,7 @@ export default function StandupHistory({ standups, members }) {
                                                     </div>
                                                     <div>
                                                         <p className="font-bold text-on-surface text-sm">{log.user.fullName || log.user.email}</p>
-                                                        <p className="text-[10px] text-on-surface-variant font-medium opacity-60">Lúc {formatDate(log.date)}</p>
+                                                        <p className="text-[10px] text-on-surface-variant font-medium opacity-60">Lúc {formatDate(log.createdAt || log.date || log.reportDate)}</p>
                                                     </div>
                                                 </div>
                                             </div>
@@ -107,18 +108,18 @@ export default function StandupHistory({ standups, members }) {
                                                 <div className="space-y-1">
                                                     <p className="text-[9px] font-black text-primary uppercase tracking-widest mb-2 opacity-70">Yesterday</p>
                                                     <div className="bg-white/50 rounded-xl p-3 text-sm text-on-surface/80 leading-relaxed italic border border-outline-variant/5 min-h-[60px]">
-                                                        {log.yesterday}
+                                                        {log.yesterdayWork || log.yesterday || '(Không có nội dung)'}
                                                     </div>
                                                 </div>
                                                 <div className="space-y-1">
                                                     <p className="text-[9px] font-black text-primary uppercase tracking-widest mb-2 opacity-70">Today</p>
                                                     <div className="bg-white/80 rounded-xl p-3 text-sm text-on-surface/90 font-medium leading-relaxed border border-primary/5 min-h-[60px]">
-                                                        {log.today}
+                                                        {log.todayPlan || log.today || '(Không có nội dung)'}
                                                     </div>
                                                 </div>
                                                 <div className="space-y-1">
                                                     <p className="text-[9px] font-black text-error uppercase tracking-widest mb-2 opacity-70">Blockers</p>
-                                                    <div className={`rounded-xl p-3 text-sm leading-relaxed border min-h-[60px] ${log.blockers ? 'bg-error-container/10 text-error border-error/10 font-bold' : 'bg-success-container/5 text-success/40 border-success/5 italic text-xs'}`}>
+                                                    <div className={`rounded-xl p-3 text-sm leading-relaxed border min-h-[60px] ${log.blockers && !log.blockers.toLowerCase().includes('không') ? 'bg-error-container/10 text-error border-error/10 font-bold' : 'bg-success-container/5 text-success/70 border-success/10 italic text-xs'}`}>
                                                         {log.blockers || "Không có vật cản nào."}
                                                     </div>
                                                 </div>

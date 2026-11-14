@@ -72,6 +72,7 @@ model Sprint {
   createdAt DateTime       @default(now())
   summary   SprintSummary? // Kết quả tổng kết Sprint
   retroSessions RetroSession[]
+  standups  DailyStandup[]
 }
 
 model UserStory {
@@ -130,17 +131,31 @@ model Task {
 }
 
 model DailyStandup {
-  id        String   @id @default(cuid())
-  yesterday String
-  today     String
-  blockers  String?
-  date      DateTime @default(now())
-  userId    String
-  projectId String
-  user      User     @relation(fields: [userId], references: [id])
-  project   Project  @relation(fields: [projectId], references: [id])
+  id            String   @id @default(cuid())
+  userId        String   @map("user_id")
+  sprintId      String   @map("sprint_id")
+  reportDate    DateTime @default(now()) @map("report_date") @db.Date
+  yesterdayWork String   @map("yesterday_work")
+  todayPlan     String   @map("today_plan")
+  blockers      String   @map("blockers")
 
+  // Tương thích ngược
+  yesterday     String?  @map("yesterday")
+  today         String?  @map("today")
+  date          DateTime @default(now()) @map("date")
+  projectId     String?  @map("project_id")
+
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sprint        Sprint   @relation(fields: [sprintId], references: [id], onDelete: Cascade)
+  project       Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, sprintId, reportDate], name: "userId_sprintId_reportDate")
+  @@index([sprintId, reportDate])
   @@index([projectId, date])
+  @@map("daily_standups")
 }
 
 model Comment {

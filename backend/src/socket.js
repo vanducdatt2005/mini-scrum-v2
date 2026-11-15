@@ -363,6 +363,17 @@ function initSocket(server, prisma) {
 
       if (global.pokerRoomsState && global.pokerRoomsState.has(cleanCode)) {
         const roomState = global.pokerRoomsState.get(cleanCode);
+
+        // AC2: Chặn lật bài khi chưa có lượt vote nào
+        const votedMembers = Array.from(roomState.members.values()).filter(m => m.hasVoted && m.vote !== null && m.vote !== undefined);
+        if (votedMembers.length === 0) {
+          socket.emit("poker:error", {
+            code: "NO_VOTES",
+            message: "Chưa có ai vote! Không thể lật bài khi chưa có lượt vote nào."
+          });
+          return;
+        }
+
         roomState.isRevealed = true;
 
         const membersList = Array.from(roomState.members.values()).map(m => ({

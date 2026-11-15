@@ -111,15 +111,29 @@ export default function PokerRoomPage() {
       }
     };
 
+    // Lắng nghe thông báo lỗi từ server (ví dụ: AC2 - chặn lật bài khi chưa ai vote)
+    const handlePokerError = (err) => {
+      if (err?.message) {
+        toast.error(err.message, { id: 'poker-server-error' });
+      }
+    };
+
     socket.on('poker:stateUpdate', handleStateUpdate);
     socket.on('poker:yourVote', handleYourVote);
+    socket.on('poker:error', handlePokerError);
 
     return () => {
       socket.emit('poker:leave', { roomCode: cleanCode });
       socket.off('poker:stateUpdate', handleStateUpdate);
       socket.off('poker:yourVote', handleYourVote);
+      socket.off('poker:error', handlePokerError);
     };
   }, [roomData, currentUser, roomCode]);
+
+  // Số lượng thành viên đã chọn bài trong phòng
+  const votedCount = useMemo(() => {
+    return members.filter(m => m.hasVoted).length;
+  }, [members]);
 
   // AC1 & AC2: Hành động chọn một lá bài và đổi lá bài trước khi Reveal
   const handleSelectCard = (card) => {
@@ -146,8 +160,18 @@ export default function PokerRoomPage() {
     }
   };
 
-  // Hành động Lật bài (SM/PO)
+  // AC1 & AC2: Hành động Lật bài (SM/PO)
   const handleRevealCards = () => {
+    // AC2: Chặn lật bài khi chưa có lượt vote nào
+    if (votedCount === 0) {
+      toast.error('Chưa có ai vote! Không thể lật bài khi chưa có lượt vote nào.', { id: 'no-votes-error' });
+      return;
+    }
+
+    if (votedCount === 1) {
+      toast('Khuyến nghị: Cần ít nhất 2 thành viên vote để so sánh độ lệch cao - thấp.', { icon: 'ℹ️', id: 'few-votes' });
+    }
+
     const socket = getSocket();
     socket.emit('poker:reveal', {
       roomCode: roomCode.toUpperCase().trim()
@@ -209,38 +233,77 @@ export default function PokerRoomPage() {
     }
   };
 
-  // Tính toán thống kê điểm số khi lật bài
+  // AC1: Tính toán thống kê điểm số & độ lệch cao - thấp (max - min) khi lật bài
   const statistics = useMemo(() => {
     if (!isRevealed || members.length === 0) return null;
-    const numericVotes = members
-      .map(m => parseFloat(m.vote))
-      .filter(v => !isNaN(v));
 
-    if (numericVotes.length === 0) {
-      return { average: 'N/A', consensus: 'N/A', count: 0 };
+    // Lọc các vote dạng số hợp lệ
+    const numericEntries = members
+      .filter(m => m.hasVoted && m.vote !== null && m.vote !== undefined && !isNaN(parseFloat(m.vote)))
+      .map(m => ({
+        fullName: m.fullName || 'Thành viên',
+        val: parseFloat(m.vote)
+      }));
+
+    // Lọc các vote đặc biệt (? hoặc ☕)
+    const specialVotes = members
+      .filter(m => m.hasVoted && (m.vote === '?' || m.vote === '☕'))
+      .map(m => ({ fullName: m.fullName || 'Thành viên', vote: m.vote }));
+
+    if (numericEntries.length === 0) {
+      return {
+        hasNumeric: false,
+        count: members.filter(m => m.hasVoted).length,
+        average: 'N/A',
+        consensus: specialVotes.length > 0 ? specialVotes[0].vote : 'N/A',
+        max: null,
+        min: null,
+        diff: null,
+        isConsensus: true,
+        maxVoters: [],
+        minVoters: [],
+        specialVotes
+      };
     }
 
-    const sum = numericVotes.reduce((acc, curr) => acc + curr, 0);
-    const avg = (sum / numericVotes.length).toFixed(1);
+    const values = numericEntries.map(e => e.val);
+    const sum = values.reduce((acc, curr) => acc + curr, 0);
+    const avg = (sum / values.length).toFixed(1);
+
+    // AC1: Tính Max, Min và Độ lệch cao - thấp (Spread = Max - Min)
+    const max = Math.max(...values);
+    const min = Math.min(...values);
+    const diff = Number((max - min).toFixed(1));
+
+    const maxVoters = numericEntries.filter(e => e.val === max).map(e => e.fullName);
+    const minVoters = numericEntries.filter(e => e.val === min).map(e => e.fullName);
 
     // Tính điểm phổ biến nhất (Consensus / Mode)
     const frequency = {};
-    numericVotes.forEach(v => {
+    values.forEach(v => {
       frequency[v] = (frequency[v] || 0) + 1;
     });
     let maxFreq = 0;
-    let mode = numericVotes[0];
+    let mode = values[0];
     for (const key in frequency) {
       if (frequency[key] > maxFreq) {
         maxFreq = frequency[key];
-        mode = key;
+        mode = Number(key);
       }
     }
 
     return {
+      hasNumeric: true,
+      count: values.length,
       average: avg,
       consensus: mode,
-      count: numericVotes.length
+      max,
+      min,
+      diff, // max - min
+      isConsensus: diff === 0,
+      maxVoters,
+      minVoters,
+      specialVotes
     };
   }, [isRevealed, members]);
 
@@ -415,14 +478,81 @@ export default function PokerRoomPage() {
             </div>
           </div>
 
-          {/* HỘP KẾT QUẢ SAU KHI LẬT BÀI */}
+          {/* HỘP KẾT QUẢ SAU KHI LẬT BÀI (AC1: max - min + người vote cao/thấp) */}
           {isRevealed && statistics && (
             <div className="bg-surface-container-lowest p-6 rounded-3xl border border-primary/30 shadow-md animate-in fade-in slide-in-from-top-2 duration-300">
-              <h4 className="text-xs font-black uppercase tracking-wider text-primary mb-4 flex items-center gap-1.5">
-                <span className="material-symbols-outlined text-sm">analytics</span>
-                Kết quả thống nhất (Consensus)
-              </h4>
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="text-xs font-black uppercase tracking-wider text-primary flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-sm">analytics</span>
+                  Kết quả đánh giá Poker
+                </h4>
+                {statistics.hasNumeric && (
+                  <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full ${
+                    statistics.isConsensus
+                      ? 'bg-emerald-500/15 text-emerald-700 border border-emerald-500/30'
+                      : 'bg-amber-500/15 text-amber-800 border border-amber-500/30'
+                  }`}>
+                    {statistics.isConsensus ? 'Đồng thuận 100%' : 'Cần thảo luận'}
+                  </span>
+                )}
+              </div>
 
+              {/* AC1: KHỐI ĐỘ CHÊNH LỆCH CAO - THẤP (MAX - MIN) */}
+              {statistics.hasNumeric && statistics.diff !== null ? (
+                <div className={`p-4 rounded-2xl border mb-4 text-center ${
+                  statistics.isConsensus 
+                    ? 'bg-emerald-500/5 border-emerald-500/20' 
+                    : 'bg-amber-500/5 border-amber-500/30'
+                }`}>
+                  <div className="text-[10px] font-black uppercase tracking-wider text-on-surface-variant/80">
+                    Độ chênh lệch cao - thấp (Max - Min)
+                  </div>
+
+                  <div className="flex items-baseline justify-center gap-1.5 my-1.5">
+                    <span className="text-3xl font-black font-mono text-on-surface">
+                      {statistics.diff}
+                    </span>
+                    <span className="text-xs font-bold text-on-surface-variant">SP</span>
+                    <span className="text-xs font-mono font-medium text-outline ml-1">
+                      (Max {statistics.max} - Min {statistics.min})
+                    </span>
+                  </div>
+
+                  {/* Chi tiết thành viên vote cao nhất & thấp nhất */}
+                  {!statistics.isConsensus ? (
+                    <div className="text-left pt-2.5 mt-2 border-t border-amber-500/20 space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold text-rose-600 flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
+                          Cao nhất ({statistics.max} SP):
+                        </span>
+                        <span className="font-semibold text-on-surface truncate text-right">
+                          {statistics.maxVoters.join(', ')}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold text-blue-600 flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
+                          Thấp nhất ({statistics.min} SP):
+                        </span>
+                        <span className="font-semibold text-on-surface truncate text-right">
+                          {statistics.minVoters.join(', ')}
+                        </span>
+                      </div>
+                      <p className="text-[11px] italic text-amber-800/80 pt-1 border-t border-amber-500/10">
+                        💡 Gợi ý Scrum Master: Mời người vote cao nhất ({statistics.max} SP) và thấp nhất ({statistics.min} SP) chia sẻ góc nhìn để cả nhóm đạt đồng thuận.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-xs font-bold text-emerald-700 pt-1 flex items-center justify-center gap-1">
+                      <span className="material-symbols-outlined text-sm">verified</span>
+                      <span>Nhóm hoàn toàn nhất trí số điểm {statistics.consensus} SP (Độ lệch: 0 SP)</span>
+                    </p>
+                  )}
+                </div>
+              ) : null}
+
+              {/* CÁC CHỈ SỐ THỐNG KÊ KHÁC */}
               <div className="grid grid-cols-2 gap-3 mb-4">
                 <div className="bg-primary/5 p-3.5 rounded-2xl border border-primary/10 text-center">
                   <div className="text-[10px] uppercase font-bold text-outline">Điểm trung bình</div>
@@ -476,16 +606,22 @@ export default function PokerRoomPage() {
                 <h3 className="font-bold text-sm text-on-surface">Thành viên trong phòng ({members.length})</h3>
               </div>
 
-              {/* Nút lật bài & vòng mới cho Moderator */}
+              {/* Nút lật bài & vòng mới cho Moderator (AC2: Chặn lật bài khi chưa ai vote) */}
               {isModerator && (
                 <div className="flex items-center gap-2">
                   {!isRevealed ? (
                     <button
                       onClick={handleRevealCards}
-                      className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold hover:bg-primary/90 transition-all flex items-center gap-1.5 shadow-sm"
+                      disabled={votedCount === 0}
+                      title={votedCount === 0 ? "Chưa có ai vote! Hãy chờ thành viên chọn bài để lật." : `Đã có ${votedCount} thành viên vote. Nhấn để lật bài.`}
+                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm ${
+                        votedCount === 0
+                          ? "bg-surface-container text-outline opacity-40 cursor-not-allowed border border-outline-variant/30"
+                          : "bg-primary text-white hover:bg-primary/90 active:scale-95 cursor-pointer shadow-md"
+                      }`}
                     >
                       <span className="material-symbols-outlined text-sm">visibility</span>
-                      <span>Lật bài</span>
+                      <span>Lật bài {votedCount > 0 ? `(${votedCount})` : ''}</span>
                     </button>
                   ) : (
                     <button
@@ -506,6 +642,9 @@ export default function PokerRoomPage() {
                 const isMe = member.userId === currentUser?.id;
                 // Kiểm tra xem thành viên này đã vote chưa
                 const hasVoted = isMe ? (myVote !== null && myVote !== undefined) : member.hasVoted;
+                const numVote = parseFloat(member.vote);
+                const isMax = isRevealed && statistics?.hasNumeric && !statistics.isConsensus && numVote === statistics.max;
+                const isMin = isRevealed && statistics?.hasNumeric && !statistics.isConsensus && numVote === statistics.min;
 
                 return (
                   <div
@@ -517,11 +656,26 @@ export default function PokerRoomPage() {
                     }`}
                   >
                     {/* Lá bài úp hoặc lật */}
-                    <div className="w-14 h-20 mb-3 rounded-xl flex items-center justify-center font-black text-xl shadow-md transition-transform duration-300 transform perspective-500">
+                    <div className="w-14 h-20 mb-3 rounded-xl flex items-center justify-center font-black text-xl shadow-md transition-transform duration-300 transform perspective-500 relative">
                       {isRevealed ? (
-                        /* Đã lật bài: Tất cả mọi người thấy số điểm */
-                        <div className="w-full h-full rounded-xl bg-white text-primary border-2 border-primary flex items-center justify-center font-mono animate-in zoom-in-75 shadow-sm">
-                          {member.vote !== null && member.vote !== undefined ? member.vote : '-'}
+                        /* Đã lật bài: Tất cả mọi người thấy số điểm (AC1) */
+                        <div className={`w-full h-full rounded-xl bg-white border-2 flex flex-col items-center justify-center font-mono animate-in zoom-in-75 shadow-sm relative ${
+                          isMax ? 'border-rose-500 text-rose-700 bg-rose-50/20' : isMin ? 'border-blue-500 text-blue-700 bg-blue-50/20' : 'border-primary text-primary'
+                        }`}>
+                          {/* Huy hiệu cao nhất / thấp nhất (AC1) */}
+                          {isMax && (
+                            <span className="absolute -top-2 px-1.5 py-0.2 bg-rose-600 text-white text-[7px] font-sans font-bold uppercase tracking-wider rounded-full shadow-sm">
+                              Max
+                            </span>
+                          )}
+                          {isMin && (
+                            <span className="absolute -top-2 px-1.5 py-0.2 bg-blue-600 text-white text-[7px] font-sans font-bold uppercase tracking-wider rounded-full shadow-sm">
+                              Min
+                            </span>
+                          )}
+                          <span className="text-xl font-black">
+                            {member.vote !== null && member.vote !== undefined ? member.vote : '-'}
+                          </span>
                         </div>
                       ) : isMe && myVote ? (
                         /* AC1: Chưa lật bài nhưng là CHÍNH MÌNH -> Chỉ mình thấy lá đã chọn */

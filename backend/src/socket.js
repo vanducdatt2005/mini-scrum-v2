@@ -274,11 +274,15 @@ function initSocket(server, prisma) {
       if (!global.pokerRoomsState.has(cleanCode)) {
         global.pokerRoomsState.set(cleanCode, {
           members: new Map(),
-          isRevealed: false
+          isRevealed: false,
+          messages: []
         });
       }
 
       const roomState = global.pokerRoomsState.get(cleanCode);
+      if (!roomState.messages) {
+        roomState.messages = [];
+      }
 
       // Kiểm tra xem user này đã có trong phòng chưa (tránh trùng socket hoặc lưu giữ vote nếu F5/reload)
       let previousVote = null;
@@ -318,6 +322,11 @@ function initSocket(server, prisma) {
         roomCode: cleanCode,
         members: membersList,
         isRevealed: roomState.isRevealed
+      });
+
+      // Gửi lịch sử thảo luận chat cho thành viên vừa vào phòng
+      socket.emit("poker:chatHistory", {
+        messages: roomState.messages || []
       });
     });
 
@@ -389,6 +398,17 @@ function initSocket(server, prisma) {
           members: membersList,
           isRevealed: true
         });
+
+        // Thông báo hệ thống: Đã lật bài
+        const sysMsg = {
+          id: `sys_${Date.now()}_reveal`,
+          isSystem: true,
+          content: "👀 Các lá bài đã được lật! Mời các thành viên cùng thảo luận kết quả.",
+          createdAt: new Date().toISOString()
+        };
+        if (!roomState.messages) roomState.messages = [];
+        roomState.messages.push(sysMsg);
+        io.to(roomChannel).emit("poker:newMessage", sysMsg);
       }
     });
 
@@ -419,6 +439,56 @@ function initSocket(server, prisma) {
           isRevealed: false
         });
         io.to(roomChannel).emit("poker:yourVote", { vote: null });
+
+        // Thông báo hệ thống: Vòng mới
+        const sysMsg = {
+          id: `sys_${Date.now()}_reset`,
+          isSystem: true,
+          content: "🔄 Vòng đánh giá mới đã bắt đầu.",
+          createdAt: new Date().toISOString()
+        };
+        if (!roomState.messages) roomState.messages = [];
+        roomState.messages.push(sysMsg);
+        io.to(roomChannel).emit("poker:newMessage", sysMsg);
+      }
+    });
+
+    // =========================================================================
+    // CHAT THẢO LUẬN REALTIME TRONG PHÒNG POKER
+    // =========================================================================
+    socket.on("poker:sendMessage", ({ roomCode, content, sender, tag }) => {
+      if (!roomCode || !content || !content.trim()) return;
+      const cleanCode = String(roomCode).toUpperCase().trim();
+      const roomChannel = `poker_${cleanCode}`;
+
+      if (global.pokerRoomsState && global.pokerRoomsState.has(cleanCode)) {
+        const roomState = global.pokerRoomsState.get(cleanCode);
+        if (!roomState.messages) roomState.messages = [];
+
+        const member = roomState.members.get(socket.id);
+        const user = sender || socket.pokerUser || (member ? {
+          id: member.userId,
+          fullName: member.fullName,
+          avatar: member.avatar
+        } : null);
+
+        const newMsg = {
+          id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          userId: user?.id || socket.id,
+          fullName: user?.fullName || member?.fullName || 'Thành viên',
+          avatar: user?.avatar || member?.avatar || null,
+          content: content.trim(),
+          tag: tag || null, // Ví dụ: 'Cao nhất', 'Thấp nhất', 'Rủi ro', 'Đơn giản'...
+          vote: (roomState.isRevealed && member) ? member.vote : null,
+          createdAt: new Date().toISOString()
+        };
+
+        roomState.messages.push(newMsg);
+        if (roomState.messages.length > 100) {
+          roomState.messages.shift();
+        }
+
+        io.to(roomChannel).emit("poker:newMessage", newMsg);
       }
     });
 

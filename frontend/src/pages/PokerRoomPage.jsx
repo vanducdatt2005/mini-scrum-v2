@@ -34,6 +34,14 @@ export default function PokerRoomPage() {
   const [timerSeconds, setTimerSeconds] = useState(30);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
 
+  // Thảo luận Realtime (Chat trong phòng Poker)
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatQuickTag, setChatQuickTag] = useState(null);
+  const [isChatCollapsed, setIsChatCollapsed] = useState(false);
+  const chatBottomRef = useRef(null);
+  const chatInputRef = useRef(null);
+
   // 1. Tải thông tin phòng và kiểm tra quyền thành viên Project (AC2)
   useEffect(() => {
     if (!roomCode) return;
@@ -124,17 +132,71 @@ export default function PokerRoomPage() {
       }
     };
 
+    // Lắng nghe lịch sử tin nhắn phòng và tin nhắn mới
+    const handleChatHistory = (data) => {
+      if (data?.messages) {
+        setChatMessages(data.messages);
+      }
+    };
+
+    const handleNewMessage = (msg) => {
+      setChatMessages((prev) => [...prev, msg]);
+    };
+
     socket.on('poker:stateUpdate', handleStateUpdate);
     socket.on('poker:yourVote', handleYourVote);
     socket.on('poker:error', handlePokerError);
+    socket.on('poker:chatHistory', handleChatHistory);
+    socket.on('poker:newMessage', handleNewMessage);
 
     return () => {
       socket.emit('poker:leave', { roomCode: cleanCode });
       socket.off('poker:stateUpdate', handleStateUpdate);
       socket.off('poker:yourVote', handleYourVote);
       socket.off('poker:error', handlePokerError);
+      socket.off('poker:chatHistory', handleChatHistory);
+      socket.off('poker:newMessage', handleNewMessage);
     };
   }, [roomData, currentUser, roomCode]);
+
+  // Tự động cuộn xuống cuối khung chat khi có tin nhắn mới
+  useEffect(() => {
+    if (!isChatCollapsed) {
+      chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [chatMessages, isChatCollapsed]);
+
+  // Gửi tin nhắn thảo luận realtime
+  const handleSendChatMessage = (e) => {
+    if (e) e.preventDefault();
+    if (!chatInput.trim()) return;
+
+    const socket = getSocket();
+    socket.emit('poker:sendMessage', {
+      roomCode: roomCode.toUpperCase().trim(),
+      content: chatInput.trim(),
+      tag: chatQuickTag,
+      sender: {
+        id: currentUser.id,
+        fullName: currentUser.fullName,
+        avatar: currentUser.avatar
+      }
+    });
+
+    setChatInput('');
+    setChatQuickTag(null);
+  };
+
+  // Chọn gợi ý tag nhanh
+  const handleSelectQuickTag = (tagText) => {
+    setChatQuickTag(tagText);
+    setChatInput((prev) => {
+      if (!prev) return `[${tagText}] `;
+      if (prev.startsWith('[')) return prev.replace(/^\[.*?\]\s*/, `[${tagText}] `);
+      return `[${tagText}] ${prev}`;
+    });
+    chatInputRef.current?.focus();
+  };
 
   // Số lượng thành viên đã chọn bài trong phòng
   const votedCount = useMemo(() => {
@@ -651,6 +713,176 @@ export default function PokerRoomPage() {
               )}
             </div>
           )}
+
+          {/* 3. THẢO LUẬN REALTIME (CHAT PHÒNG POKER) */}
+          <div className="bg-surface-container-lowest p-5 rounded-3xl border border-outline-variant/20 shadow-sm flex flex-col">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                  <span className="material-symbols-outlined text-base">forum</span>
+                </div>
+                <div>
+                  <h4 className="text-xs font-black uppercase tracking-wider text-on-surface">
+                    Thảo luận Realtime
+                  </h4>
+                  <span className="text-[10px] text-on-surface-variant font-medium">
+                    Giải thích lý do đánh giá cao &amp; thấp
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {chatMessages.length > 0 && (
+                  <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-bold">
+                    {chatMessages.length} tin nhắn
+                  </span>
+                )}
+                <button
+                  onClick={() => setIsChatCollapsed(!isChatCollapsed)}
+                  className="p-1 text-on-surface-variant hover:text-on-surface hover:bg-surface-container rounded-lg transition-colors"
+                  title={isChatCollapsed ? "Mở rộng khung chat" : "Thu gọn khung chat"}
+                >
+                  <span className="material-symbols-outlined text-sm">
+                    {isChatCollapsed ? "expand_more" : "expand_less"}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {!isChatCollapsed && (
+              <>
+                {/* Khu vực danh sách tin nhắn cuộn */}
+                <div className="h-64 overflow-y-auto space-y-2.5 pr-1 scrollbar-thin mb-3">
+                  {chatMessages.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center text-on-surface-variant/60 py-6 px-4">
+                      <span className="material-symbols-outlined text-3xl mb-1.5 text-primary/30">
+                        chat_bubble_outline
+                      </span>
+                      <p className="text-xs font-bold text-on-surface">Chưa có thảo luận nào</p>
+                      <p className="text-[11px] text-on-surface-variant mt-0.5">
+                        Nhập lý do tại sao bạn cho điểm này để cả nhóm cùng hiểu góc nhìn của bạn!
+                      </p>
+                    </div>
+                  ) : (
+                    chatMessages.map((msg) => {
+                      if (msg.isSystem) {
+                        return (
+                          <div key={msg.id} className="flex justify-center my-1.5">
+                            <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-surface-container text-on-surface-variant/80 border border-outline-variant/20 shadow-2xs">
+                              {msg.content}
+                            </span>
+                          </div>
+                        );
+                      }
+
+                      const isMe = msg.userId === currentUser?.id;
+                      const numVote = parseFloat(msg.vote);
+                      const isHigh = isRevealed && statistics?.hasNumeric && numVote === statistics.max;
+                      const isLow = isRevealed && statistics?.hasNumeric && numVote === statistics.min;
+
+                      return (
+                        <div
+                          key={msg.id}
+                          className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} text-xs`}
+                        >
+                          {/* Tên + Badge Vote + Giờ */}
+                          <div className={`flex items-center gap-1.5 mb-1 px-1 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
+                            <span className="font-bold text-[11px] text-on-surface">
+                              {msg.fullName} {isMe ? '(Tôi)' : ''}
+                            </span>
+
+                            {/* Badge điểm vote của người gửi */}
+                            {msg.vote !== null && msg.vote !== undefined && (
+                              <span className={`text-[9px] font-black font-mono px-1.5 py-0.2 rounded-full ${
+                                isHigh
+                                  ? 'bg-rose-500 text-white'
+                                  : isLow
+                                  ? 'bg-blue-500 text-white'
+                                  : 'bg-primary/10 text-primary'
+                              }`}>
+                                {msg.vote} SP {isHigh ? '(Cao nhất)' : isLow ? '(Thấp nhất)' : ''}
+                              </span>
+                            )}
+
+                            {/* Tag lý do */}
+                            {msg.tag && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-800 border border-amber-500/20">
+                                {msg.tag}
+                              </span>
+                            )}
+
+                            <span className="text-[9px] text-outline">
+                              {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+
+                          {/* Bong bóng tin nhắn */}
+                          <div
+                            className={`p-2.5 rounded-2xl max-w-[85%] break-words leading-relaxed shadow-2xs ${
+                              isMe
+                                ? 'bg-primary text-white rounded-tr-xs'
+                                : 'bg-surface-container text-on-surface rounded-tl-xs border border-outline-variant/15'
+                            }`}
+                          >
+                            {msg.content}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                  <div ref={chatBottomRef} />
+                </div>
+
+                {/* Các gợi ý lý do nhanh (Quick Chips) */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-2 scrollbar-none mb-2">
+                  <span className="text-[10px] font-bold text-outline shrink-0">Gợi ý:</span>
+                  {[
+                    { label: '🚀 Đơn giản / Có sẵn', tag: 'Đơn giản' },
+                    { label: '⚠️ Phức tạp / Rủi ro', tag: 'Rủi ro' },
+                    { label: '🔗 Phụ thuộc API bên ngoài', tag: 'Phụ thuộc' },
+                    { label: '❓ Chưa rõ yêu cầu', tag: 'Chưa rõ' }
+                  ].map((item) => (
+                    <button
+                      key={item.tag}
+                      type="button"
+                      onClick={() => handleSelectQuickTag(item.tag)}
+                      className={`text-[10px] font-bold px-2 py-0.8 rounded-lg shrink-0 border transition-all ${
+                        chatQuickTag === item.tag
+                          ? 'bg-amber-500/20 text-amber-800 border-amber-500/40 shadow-xs'
+                          : 'bg-surface-container/60 hover:bg-surface-container text-on-surface-variant border-outline-variant/20'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Ô nhập tin nhắn */}
+                <form onSubmit={handleSendChatMessage} className="flex items-center gap-2">
+                  <input
+                    ref={chatInputRef}
+                    type="text"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    placeholder="Nhập lý do bạn đánh giá hoặc trao đổi..."
+                    className="flex-1 bg-surface text-on-surface px-3 py-2 rounded-xl text-xs border border-outline-variant/30 focus:outline-none focus:ring-1 focus:ring-primary shadow-inner"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!chatInput.trim()}
+                    className={`p-2 rounded-xl transition-all flex items-center justify-center shrink-0 ${
+                      chatInput.trim()
+                        ? 'bg-primary text-white hover:bg-primary/90 shadow-sm active:scale-95'
+                        : 'bg-surface-container text-outline opacity-40 cursor-not-allowed'
+                    }`}
+                    title="Gửi tin nhắn"
+                  >
+                    <span className="material-symbols-outlined text-sm">send</span>
+                  </button>
+                </form>
+              </>
+            )}
+          </div>
         </div>
 
         {/* CỘT PHẢI: BÀN POKER + THÀNH VIÊN VÀ BỘ BÀI */}
@@ -769,8 +1001,22 @@ export default function PokerRoomPage() {
                       <div className="text-xs font-bold text-on-surface truncate mt-0.5">
                         {statistics.lowestVoter?.fullName || 'Thành viên'}
                       </div>
-                      <div className="text-[10px] text-blue-600/80 italic">
-                        Giải thích tại sao đánh giá thấp
+                      <div className="flex items-center justify-between gap-1 mt-1">
+                        <span className="text-[10px] text-blue-600/80 italic truncate">
+                          Giải thích tại sao đánh giá thấp
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsChatCollapsed(false);
+                            handleSelectQuickTag("Lý do thấp");
+                          }}
+                          className="text-[10px] font-bold text-blue-700 hover:text-blue-900 bg-blue-100 hover:bg-blue-200 px-1.5 py-0.5 rounded flex items-center gap-0.5 transition-colors shrink-0 shadow-2xs"
+                          title="Mở chat và gắn tag lý do thấp"
+                        >
+                          <span className="material-symbols-outlined text-[11px]">chat</span>
+                          <span>Chat</span>
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -854,8 +1100,22 @@ export default function PokerRoomPage() {
                       <div className="text-xs font-bold text-on-surface truncate mt-0.5">
                         {statistics.highestVoter?.fullName || 'Thành viên'}
                       </div>
-                      <div className="text-[10px] text-rose-600/80 italic">
-                        Giải thích tại sao đánh giá cao
+                      <div className="flex items-center justify-between gap-1 mt-1">
+                        <span className="text-[10px] text-rose-600/80 italic truncate">
+                          Giải thích tại sao đánh giá cao
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsChatCollapsed(false);
+                            handleSelectQuickTag("Lý do cao");
+                          }}
+                          className="text-[10px] font-bold text-rose-700 hover:text-rose-900 bg-rose-100 hover:bg-rose-200 px-1.5 py-0.5 rounded flex items-center gap-0.5 transition-colors shrink-0 shadow-2xs"
+                          title="Mở chat và gắn tag lý do cao"
+                        >
+                          <span className="material-symbols-outlined text-[11px]">chat</span>
+                          <span>Chat</span>
+                        </button>
                       </div>
                     </div>
                   </div>

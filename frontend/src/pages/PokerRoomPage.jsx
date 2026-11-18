@@ -28,6 +28,12 @@ export default function PokerRoomPage() {
   const [isSavingEstimate, setIsSavingEstimate] = useState(false);
   const [isClosingRoom, setIsClosingRoom] = useState(false);
 
+  // US-036: Vòng "nói nhanh" khi lệch điểm lớn (Speed Talk 30s)
+  const [varianceThreshold, setVarianceThreshold] = useState(5); // Ngưỡng cấu hình mặc định: 5
+  const [speedTalkDismissed, setSpeedTalkDismissed] = useState(false);
+  const [timerSeconds, setTimerSeconds] = useState(30);
+  const [isTimerRunning, setIsTimerRunning] = useState(false);
+
   // 1. Tải thông tin phòng và kiểm tra quyền thành viên Project (AC2)
   useEffect(() => {
     if (!roomCode) return;
@@ -182,6 +188,9 @@ export default function PokerRoomPage() {
   // Hành động Vòng mới (Reset)
   const handleResetRound = () => {
     setMyVote(null);
+    setSpeedTalkDismissed(false);
+    setIsTimerRunning(false);
+    setTimerSeconds(30);
     const socket = getSocket();
     socket.emit('poker:reset', {
       roomCode: roomCode.toUpperCase().trim()
@@ -241,14 +250,16 @@ export default function PokerRoomPage() {
     const numericEntries = members
       .filter(m => m.hasVoted && m.vote !== null && m.vote !== undefined && !isNaN(parseFloat(m.vote)))
       .map(m => ({
+        userId: m.userId,
         fullName: m.fullName || 'Thành viên',
+        avatar: m.avatar || null,
         val: parseFloat(m.vote)
       }));
 
     // Lọc các vote đặc biệt (? hoặc ☕)
     const specialVotes = members
       .filter(m => m.hasVoted && (m.vote === '?' || m.vote === '☕'))
-      .map(m => ({ fullName: m.fullName || 'Thành viên', vote: m.vote }));
+      .map(m => ({ userId: m.userId, fullName: m.fullName || 'Thành viên', avatar: m.avatar, vote: m.vote }));
 
     if (numericEntries.length === 0) {
       return {
@@ -262,6 +273,8 @@ export default function PokerRoomPage() {
         isConsensus: true,
         maxVoters: [],
         minVoters: [],
+        highestVoter: null,
+        lowestVoter: null,
         specialVotes
       };
     }
@@ -277,6 +290,10 @@ export default function PokerRoomPage() {
 
     const maxVoters = numericEntries.filter(e => e.val === max).map(e => e.fullName);
     const minVoters = numericEntries.filter(e => e.val === min).map(e => e.fullName);
+
+    // US-036 AC1: Lấy cụ thể 1 người vote thấp nhất và 1 người vote cao nhất để highlight và mời phát biểu
+    const highestVoter = numericEntries.find(e => e.val === max) || null;
+    const lowestVoter = numericEntries.find(e => e.val === min) || null;
 
     // Tính điểm phổ biến nhất (Consensus / Mode)
     const frequency = {};
@@ -303,9 +320,49 @@ export default function PokerRoomPage() {
       isConsensus: diff === 0,
       maxVoters,
       minVoters,
+      highestVoter, // 1 người vote cao nhất
+      lowestVoter,  // 1 người vote thấp nhất
       specialVotes
     };
   }, [isRevealed, members]);
+
+  // US-036: Quản lý timer đếm ngược 30 giây (chỉ UI timer - AC1)
+  useEffect(() => {
+    let timer = null;
+    if (isTimerRunning && timerSeconds > 0) {
+      timer = setInterval(() => {
+        setTimerSeconds((prev) => {
+          if (prev <= 1) {
+            setIsTimerRunning(false);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [isTimerRunning, timerSeconds]);
+
+  // US-036 AC1 & AC2: Khi Reveal, kiểm tra độ lệch so với ngưỡng
+  useEffect(() => {
+    if (isRevealed && statistics?.hasNumeric && statistics.diff !== null) {
+      if (statistics.diff >= varianceThreshold) {
+        // AC1: Độ lệch >= ngưỡng -> Tự động hiện prompt nói nhanh + đếm ngược 30s
+        setSpeedTalkDismissed(false);
+        setTimerSeconds(30);
+        setIsTimerRunning(true);
+      } else {
+        // AC2: Độ lệch < ngưỡng -> Không hiện prompt nói nhanh
+        setSpeedTalkDismissed(true);
+        setIsTimerRunning(false);
+      }
+    } else {
+      setIsTimerRunning(false);
+      setTimerSeconds(30);
+    }
+  }, [isRevealed, statistics?.diff, varianceThreshold]);
 
   // =========================================================================
   // GIAO DIỆN KHI ĐANG TẢI
@@ -608,7 +665,26 @@ export default function PokerRoomPage() {
 
               {/* Nút lật bài & vòng mới cho Moderator (AC2: Chặn lật bài khi chưa ai vote) */}
               {isModerator && (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap justify-end">
+                  {/* US-036: Cấu hình ngưỡng độ lệch kích hoạt vòng nói nhanh */}
+                  <div className="flex items-center gap-1.5 bg-surface-container/60 px-2.5 py-1.5 rounded-xl border border-outline-variant/20 text-xs">
+                    <span className="text-[11px] font-bold text-on-surface-variant flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[13px] text-amber-600">tune</span>
+                      <span className="hidden sm:inline">Ngưỡng nói nhanh:</span>
+                    </span>
+                    <select
+                      value={varianceThreshold}
+                      onChange={(e) => setVarianceThreshold(Number(e.target.value))}
+                      className="bg-surface text-on-surface font-bold text-xs rounded-lg px-2 py-0.5 border border-outline-variant/30 focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer"
+                      title="Chọn ngưỡng chênh lệch Max - Min để tự động kích hoạt vòng nói nhanh 30s"
+                    >
+                      <option value={3}>≥ 3 SP</option>
+                      <option value={5}>≥ 5 SP (Mặc định)</option>
+                      <option value={8}>≥ 8 SP</option>
+                      <option value={10}>≥ 10 SP</option>
+                    </select>
+                  </div>
+
                   {!isRevealed ? (
                     <button
                       onClick={handleRevealCards}
@@ -636,6 +712,157 @@ export default function PokerRoomPage() {
               )}
             </div>
 
+            {/* US-036 AC1 & AC2: Prompt Vòng "nói nhanh" 30 giây khi max - min >= ngưỡng */}
+            {isRevealed && statistics?.hasNumeric && statistics.diff !== null && statistics.diff >= varianceThreshold && !speedTalkDismissed && (
+              <div className="mb-6 p-4 md:p-5 rounded-2xl bg-gradient-to-r from-amber-500/10 via-rose-500/10 to-amber-500/10 border-2 border-amber-500/40 shadow-md animate-in slide-in-from-top-3 duration-300 relative">
+                {/* Header của Prompt */}
+                <div className="flex items-start justify-between gap-3 mb-4">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-700 flex items-center justify-center shrink-0 shadow-sm">
+                      <span className="material-symbols-outlined text-xl animate-pulse">campaign</span>
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="text-sm font-black text-on-surface">
+                          Vòng &quot;Nói Nhanh&quot; (Speed Talk)
+                        </h4>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-700 border border-rose-500/20">
+                          Độ lệch {statistics.diff} SP (≥ {varianceThreshold} SP)
+                        </span>
+                      </div>
+                      <p className="text-xs text-on-surface-variant mt-0.5 font-medium">
+                        Ai thấp &amp; ai cao nói lý do 30 giây để tìm tiếng nói chung
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Nút đóng / bỏ qua prompt */}
+                  <button
+                    onClick={() => setSpeedTalkDismissed(true)}
+                    className="p-1 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors"
+                    title="Đóng vòng nói nhanh"
+                  >
+                    <span className="material-symbols-outlined text-base">close</span>
+                  </button>
+                </div>
+
+                {/* 3 Cột: Người vote thấp nhất - Đồng hồ 30s - Người vote cao nhất */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center bg-surface-container-lowest/80 p-3.5 rounded-xl border border-amber-500/20">
+                  {/* Cột 1: Người vote thấp nhất */}
+                  <div className="flex items-center gap-3 p-2.5 rounded-lg bg-blue-50/50 border border-blue-200">
+                    <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-sm shrink-0 overflow-hidden ring-2 ring-blue-400">
+                      {statistics.lowestVoter?.avatar ? (
+                        <img src={getAvatarUrl(statistics.lowestVoter.avatar)} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        statistics.lowestVoter?.fullName?.charAt(0).toUpperCase() || 'L'
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.2 rounded bg-blue-600 text-white">
+                          Thấp nhất
+                        </span>
+                        <span className="font-mono font-bold text-blue-700 text-xs">
+                          {statistics.lowestVoter?.val} SP
+                        </span>
+                      </div>
+                      <div className="text-xs font-bold text-on-surface truncate mt-0.5">
+                        {statistics.lowestVoter?.fullName || 'Thành viên'}
+                      </div>
+                      <div className="text-[10px] text-blue-600/80 italic">
+                        Giải thích tại sao đánh giá thấp
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Cột 2: Countdown 30s UI Timer (AC1) */}
+                  <div className="flex flex-col items-center justify-center p-2 rounded-lg bg-surface-container/40">
+                    <div className="flex items-baseline gap-1">
+                      <span className={`text-2xl font-black font-mono tracking-tight ${
+                        timerSeconds <= 5 ? 'text-rose-600 animate-pulse' : 'text-on-surface'
+                      }`}>
+                        {timerSeconds}
+                      </span>
+                      <span className="text-[11px] font-bold text-on-surface-variant">giây</span>
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div className="w-full max-w-[140px] h-1.5 bg-surface-container-high rounded-full overflow-hidden my-1.5">
+                      <div
+                        className={`h-full transition-all duration-1000 ${
+                          timerSeconds <= 5 ? 'bg-rose-500' : 'bg-primary'
+                        }`}
+                        style={{ width: `${(timerSeconds / 30) * 100}%` }}
+                      />
+                    </div>
+
+                    {/* Nút điều khiển Timer */}
+                    <div className="flex items-center gap-2 mt-1">
+                      <button
+                        onClick={() => setIsTimerRunning(!isTimerRunning)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all shadow-sm ${
+                          isTimerRunning
+                            ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
+                            : 'bg-primary text-white hover:bg-primary/90'
+                        }`}
+                        title={isTimerRunning ? 'Tạm dừng đếm ngược' : 'Bắt đầu đếm ngược'}
+                      >
+                        <span className="material-symbols-outlined text-[13px]">
+                          {isTimerRunning ? 'pause' : 'play_arrow'}
+                        </span>
+                        <span>{isTimerRunning ? 'Dừng' : 'Bắt đầu'}</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setTimerSeconds(30);
+                          setIsTimerRunning(true);
+                        }}
+                        className="px-2 py-1 rounded-lg text-[11px] font-bold bg-surface-container hover:bg-surface-container-high text-on-surface-variant transition-colors flex items-center gap-0.5"
+                        title="Đặt lại 30 giây"
+                      >
+                        <span className="material-symbols-outlined text-[13px]">replay</span>
+                        <span>30s</span>
+                      </button>
+                    </div>
+
+                    {timerSeconds === 0 && (
+                      <span className="text-[10px] font-bold text-rose-600 mt-1 animate-bounce">
+                        ⏰ Hết thời gian 30s!
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Cột 3: Người vote cao nhất */}
+                  <div className="flex items-center gap-3 p-2.5 rounded-lg bg-rose-50/50 border border-rose-200">
+                    <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center font-bold text-sm shrink-0 overflow-hidden ring-2 ring-rose-400">
+                      {statistics.highestVoter?.avatar ? (
+                        <img src={getAvatarUrl(statistics.highestVoter.avatar)} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        statistics.highestVoter?.fullName?.charAt(0).toUpperCase() || 'H'
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.2 rounded bg-rose-600 text-white">
+                          Cao nhất
+                        </span>
+                        <span className="font-mono font-bold text-rose-700 text-xs">
+                          {statistics.highestVoter?.val} SP
+                        </span>
+                      </div>
+                      <div className="text-xs font-bold text-on-surface truncate mt-0.5">
+                        {statistics.highestVoter?.fullName || 'Thành viên'}
+                      </div>
+                      <div className="text-[10px] text-rose-600/80 italic">
+                        Giải thích tại sao đánh giá cao
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Danh sách các lá bài thành viên trên bàn Poker */}
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 mb-6">
               {members.map((member) => {
@@ -646,11 +873,19 @@ export default function PokerRoomPage() {
                 const isMax = isRevealed && statistics?.hasNumeric && !statistics.isConsensus && numVote === statistics.max;
                 const isMin = isRevealed && statistics?.hasNumeric && !statistics.isConsensus && numVote === statistics.min;
 
+                // US-036 AC1: Highlight 1 người thấp + 1 người cao khi lệch >= ngưỡng
+                const isSpeedTalkHigh = isRevealed && statistics?.hasNumeric && statistics.diff !== null && statistics.diff >= varianceThreshold && member.userId === statistics.highestVoter?.userId;
+                const isSpeedTalkLow = isRevealed && statistics?.hasNumeric && statistics.diff !== null && statistics.diff >= varianceThreshold && member.userId === statistics.lowestVoter?.userId;
+
                 return (
                   <div
                     key={member.userId}
                     className={`flex flex-col items-center p-4 rounded-2xl border transition-all ${
-                      hasVoted 
+                      isSpeedTalkHigh
+                        ? 'bg-rose-500/10 border-rose-500/60 ring-4 ring-rose-400/50 shadow-xl scale-105'
+                        : isSpeedTalkLow
+                        ? 'bg-blue-500/10 border-blue-500/60 ring-4 ring-blue-400/50 shadow-xl scale-105'
+                        : hasVoted 
                         ? 'bg-primary/5 border-primary/30 shadow-sm' 
                         : 'bg-surface-container/30 border-outline-variant/15 opacity-80'
                     }`}
@@ -660,19 +895,36 @@ export default function PokerRoomPage() {
                       {isRevealed ? (
                         /* Đã lật bài: Tất cả mọi người thấy số điểm (AC1) */
                         <div className={`w-full h-full rounded-xl bg-white border-2 flex flex-col items-center justify-center font-mono animate-in zoom-in-75 shadow-sm relative ${
-                          isMax ? 'border-rose-500 text-rose-700 bg-rose-50/20' : isMin ? 'border-blue-500 text-blue-700 bg-blue-50/20' : 'border-primary text-primary'
+                          isSpeedTalkHigh
+                            ? 'border-rose-600 text-rose-700 bg-rose-50 shadow-md ring-2 ring-rose-400'
+                            : isSpeedTalkLow
+                            ? 'border-blue-600 text-blue-700 bg-blue-50 shadow-md ring-2 ring-blue-400'
+                            : isMax 
+                            ? 'border-rose-500 text-rose-700 bg-rose-50/20' 
+                            : isMin 
+                            ? 'border-blue-500 text-blue-700 bg-blue-50/20' 
+                            : 'border-primary text-primary'
                         }`}>
                           {/* Huy hiệu cao nhất / thấp nhất (AC1) */}
-                          {isMax && (
+                          {isSpeedTalkHigh ? (
+                            <span className="absolute -top-2.5 px-1.5 py-0.5 bg-rose-600 text-white text-[8px] font-sans font-bold uppercase tracking-wider rounded-full shadow-sm flex items-center gap-0.5 whitespace-nowrap">
+                              <span className="material-symbols-outlined text-[10px]">campaign</span>
+                              <span>Nói nhanh (Max)</span>
+                            </span>
+                          ) : isSpeedTalkLow ? (
+                            <span className="absolute -top-2.5 px-1.5 py-0.5 bg-blue-600 text-white text-[8px] font-sans font-bold uppercase tracking-wider rounded-full shadow-sm flex items-center gap-0.5 whitespace-nowrap">
+                              <span className="material-symbols-outlined text-[10px]">campaign</span>
+                              <span>Nói nhanh (Min)</span>
+                            </span>
+                          ) : isMax ? (
                             <span className="absolute -top-2 px-1.5 py-0.2 bg-rose-600 text-white text-[7px] font-sans font-bold uppercase tracking-wider rounded-full shadow-sm">
                               Max
                             </span>
-                          )}
-                          {isMin && (
+                          ) : isMin ? (
                             <span className="absolute -top-2 px-1.5 py-0.2 bg-blue-600 text-white text-[7px] font-sans font-bold uppercase tracking-wider rounded-full shadow-sm">
                               Min
                             </span>
-                          )}
+                          ) : null}
                           <span className="text-xl font-black">
                             {member.vote !== null && member.vote !== undefined ? member.vote : '-'}
                           </span>

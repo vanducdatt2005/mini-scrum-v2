@@ -4,7 +4,10 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import CommentSection from './CommentSection';
 import AttachmentSection from './AttachmentSection';
+import ActivityLog from './ActivityLog';
 import { useAuth } from '../context/AuthContext';
+import { getAvatarUrl } from '../services/api';
+import EditTaskModal from './EditTaskModal';
 
 export function TaskCard({ 
   id, 
@@ -14,6 +17,7 @@ export function TaskCard({
   assignee, 
   assigneeId, 
   dueDate,
+  version = 1,
   members = [], 
   userRole = 'MEMBER',
   currentUser: propCurrentUser,
@@ -35,7 +39,9 @@ export function TaskCard({
     transition,
     isDragging,
   } = useSortable({ id });
+  const [activeTab, setActiveTab] = useState(null);
   const [showComments, setShowComments] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const dateInputRef = useRef(null);
 
   const style = {
@@ -46,13 +52,16 @@ export function TaskCard({
 
   const cleanId = id.replace('task-', '');
 
+  const isManagement = userRole === 'PO' || userRole === 'SM';
+
   const handleAssigneeChange = (e) => {
+    if (!isManagement) return;
     const newAssigneeId = e.target.value === 'unassigned' ? null : e.target.value;
-    onUpdate({ assigneeId: newAssigneeId });
+    onUpdate({ assigneeId: newAssigneeId, version: version ?? 1 });
   };
 
   const handleDateChange = (e) => {
-    onUpdate({ dueDate: e.target.value || null });
+    onUpdate({ dueDate: e.target.value || null, version: version ?? 1 });
   };
 
   const isOverdue = dueDate && new Date(dueDate) < new Date(new Date().setHours(0,0,0,0)) && status !== 'DONE';
@@ -75,18 +84,31 @@ export function TaskCard({
       </div>
 
       <div className="flex justify-between items-start gap-2 mb-1">
-        <h5 className="text-xs font-bold text-on-surface line-clamp-2 leading-tight">
+        <h5 
+          className="text-xs font-bold text-on-surface line-clamp-2 leading-tight cursor-pointer hover:text-primary transition-colors"
+          onClick={(e) => { e.stopPropagation(); setIsEditModalOpen(true); }}
+          title="Nhấp để chỉnh sửa task"
+        >
           {title}
         </h5>
-        {onDelete && (
+        <div className="flex items-center gap-0.5">
           <button
-            onClick={(e) => { e.stopPropagation(); onDelete(cleanId); }}
-            className="opacity-0 group-hover:opacity-100 p-1 hover:bg-error/10 text-error rounded transition-opacity"
-            title="Xóa task"
+            onClick={(e) => { e.stopPropagation(); setIsEditModalOpen(true); }}
+            className="opacity-0 group-hover:opacity-100 p-1 hover:bg-primary/10 text-primary rounded transition-opacity"
+            title="Chỉnh sửa task"
           >
-            <span className="material-symbols-outlined text-[14px]">delete</span>
+            <span className="material-symbols-outlined text-[14px]">edit</span>
           </button>
-        )}
+          {onDelete && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onDelete(cleanId); }}
+              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-error/10 text-error rounded transition-opacity"
+              title="Xóa task"
+            >
+              <span className="material-symbols-outlined text-[14px]">delete</span>
+            </button>
+          )}
+        </div>
       </div>
       
       {description && (
@@ -154,21 +176,31 @@ export function TaskCard({
         >
           {assignee ? (
             <div 
-              className="w-6 h-6 rounded-full bg-primary text-on-primary flex items-center justify-center text-[10px] font-bold shadow-sm border border-primary/20"
+              className="w-6 h-6 rounded-full overflow-hidden bg-primary text-on-primary flex items-center justify-center text-[10px] font-bold shadow-sm border border-primary/20"
               title={assignee.fullName || assignee.email}
             >
-              { (assignee.fullName || assignee.email || '?').charAt(0).toUpperCase() }
+              {assignee.avatar ? (
+                <img 
+                  src={getAvatarUrl(assignee.avatar)} 
+                  alt="Avatar" 
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                (assignee.fullName || assignee.email || '?').charAt(0).toUpperCase()
+              )}
             </div>
           ) : (
             <div 
-              className="w-6 h-6 rounded-full bg-surface-container flex items-center justify-center text-outline border border-dashed border-outline-variant/30 hover:bg-primary/10 hover:text-primary transition-colors"
-              title="Gán người phụ trách"
+              className={`w-6 h-6 rounded-full bg-surface-container flex items-center justify-center text-outline border border-dashed border-outline-variant/30 ${
+                isManagement ? 'hover:bg-primary/10 hover:text-primary cursor-pointer' : 'opacity-40 cursor-not-allowed'
+              } transition-colors`}
+              title={isManagement ? "Gán người phụ trách" : "Chỉ PO/SM mới có quyền gán Task"}
             >
                <span className="material-symbols-outlined text-[12px]">person_add</span>
             </div>
           )}
 
-          {members.length > 0 && (
+          {isManagement && members.length > 0 && (
             <select
               value={assigneeId || 'unassigned'}
               onChange={handleAssigneeChange}
@@ -187,27 +219,44 @@ export function TaskCard({
         </div>
       </div>
 
-      {/* ==================== COMMENT SECTION - US-046 ==================== */}
+      {/* ==================== COMMENTS & ACTIVITY LOG ==================== */}
       <div className="mt-3 pt-3 border-t border-outline-variant/10">
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setShowComments(!showComments);
-          }}
-          className={`flex w-full items-center justify-center gap-1.5 py-1.5 px-3 text-xs font-semibold transition-all rounded-xl border
-            ${showComments 
-              ? 'bg-primary/10 text-primary border-primary/20 shadow-sm' 
-              : 'text-on-surface-variant hover:text-primary hover:bg-surface-container border-transparent'}`}
-        >
-          <span className="material-symbols-outlined text-sm">
-            {showComments ? 'expand_less' : 'chat'}
-          </span>
-          <span>{showComments ? 'Ẩn bình luận' : 'Thảo luận & Bình luận'}</span>
-        </button>
+        <div className="flex items-center gap-1.5 w-full">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveTab(activeTab === 'comments' ? null : 'comments');
+            }}
+            className={`flex-1 flex items-center justify-center gap-1 py-1.5 px-2 text-[11px] font-semibold transition-all rounded-xl border ${
+              activeTab === 'comments'
+                ? 'bg-primary/10 text-primary border-primary/20 shadow-sm font-bold'
+                : 'text-on-surface-variant hover:text-primary hover:bg-surface-container border-transparent'
+            }`}
+          >
+            <span className="material-symbols-outlined text-sm">chat</span>
+            <span>{activeTab === 'comments' ? 'Ẩn' : 'Bình luận'}</span>
+          </button>
 
-        {showComments && (
-          <div className="animate-in fade-in duration-200">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveTab(activeTab === 'activity' ? null : 'activity');
+            }}
+            className={`flex-1 flex items-center justify-center gap-1 py-1.5 px-2 text-[11px] font-semibold transition-all rounded-xl border ${
+              activeTab === 'activity'
+                ? 'bg-primary/10 text-primary border-primary/20 shadow-sm font-bold'
+                : 'text-on-surface-variant hover:text-primary hover:bg-surface-container border-transparent'
+            }`}
+          >
+            <span className="material-symbols-outlined text-sm">manage_history</span>
+            <span>{activeTab === 'activity' ? 'Ẩn' : 'Lịch sử'}</span>
+          </button>
+        </div>
+
+        {activeTab === 'comments' && (
+          <div className="animate-in fade-in duration-200 mt-2">
             <CommentSection
               entityId={cleanId}
               entityType="task"
@@ -217,7 +266,32 @@ export function TaskCard({
             <AttachmentSection entityId={cleanId} entityType="task" />
           </div>
         )}
+
+        {activeTab === 'activity' && (
+          <div className="animate-in fade-in duration-200 mt-2 p-2 bg-slate-50 dark:bg-slate-900/60 rounded-2xl border border-slate-200/60 dark:border-slate-800">
+            <ActivityLog entityType="TASK" entityId={cleanId} />
+          </div>
+        )}
       </div>
+
+      <EditTaskModal
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        task={{
+          id: cleanId,
+          title,
+          description,
+          status,
+          assignee,
+          assigneeId,
+          dueDate,
+          version: version ?? 1
+        }}
+        members={members}
+        onSaveSuccess={(updated) => {
+          if (onUpdate) onUpdate(updated);
+        }}
+      />
     </div>
   );
 }

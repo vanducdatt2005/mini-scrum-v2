@@ -217,37 +217,325 @@ function initSocket(server, prisma) {
       }
     });
 
-    // Room handlers cho Story & Task Comments (Realtime Discussion)
-    socket.on("joinStory", (storyId) => {
+    // Room handlers cho Story & Task Comments (Realtime Discussion - AC4)
+    const handleJoinStory = (storyId) => {
       if (storyId) {
         socket.join(`story_${storyId}`);
         console.log(`Socket ${socket.id} joined story room: story_${storyId}`);
       }
-    });
-
-    socket.on("leaveStory", (storyId) => {
+    };
+    const handleLeaveStory = (storyId) => {
       if (storyId) {
         socket.leave(`story_${storyId}`);
         console.log(`Socket ${socket.id} left story room: story_${storyId}`);
       }
-    });
-
-    socket.on("joinTask", (taskId) => {
+    };
+    const handleJoinTask = (taskId) => {
       if (taskId) {
         socket.join(`task_${taskId}`);
         console.log(`Socket ${socket.id} joined task room: task_${taskId}`);
       }
-    });
-
-    socket.on("leaveTask", (taskId) => {
+    };
+    const handleLeaveTask = (taskId) => {
       if (taskId) {
         socket.leave(`task_${taskId}`);
         console.log(`Socket ${socket.id} left task room: task_${taskId}`);
+      }
+    };
+
+    socket.on("joinStory", handleJoinStory);
+    socket.on("JOIN_STORY_ROOM", handleJoinStory);
+    socket.on("leaveStory", handleLeaveStory);
+    socket.on("LEAVE_STORY_ROOM", handleLeaveStory);
+
+    socket.on("joinTask", handleJoinTask);
+    socket.on("JOIN_TASK_ROOM", handleJoinTask);
+    socket.on("leaveTask", handleLeaveTask);
+    socket.on("LEAVE_TASK_ROOM", handleLeaveTask);
+
+
+    // =========================================================================
+    // PLANNING POKER WEBSOCKET REALTIME (US-033)
+    // =========================================================================
+    socket.on("poker:join", ({ roomCode, user }) => {
+      if (!roomCode || !user) return;
+      const cleanCode = String(roomCode).toUpperCase().trim();
+      const roomChannel = `poker_${cleanCode}`;
+      socket.join(roomChannel);
+      socket.pokerRoomCode = cleanCode;
+      socket.pokerUser = user;
+
+      console.log(`Socket ${socket.id} (User: ${user.fullName || user.id}) joined poker room: ${cleanCode}`);
+
+      // Khởi tạo state phòng nếu chưa có
+      if (!global.pokerRoomsState) {
+        global.pokerRoomsState = new Map();
+      }
+      if (!global.pokerRoomsState.has(cleanCode)) {
+        global.pokerRoomsState.set(cleanCode, {
+          members: new Map(),
+          isRevealed: false,
+          messages: []
+        });
+      }
+
+      const roomState = global.pokerRoomsState.get(cleanCode);
+      if (!roomState.messages) {
+        roomState.messages = [];
+      }
+
+      // Kiểm tra xem user này đã có trong phòng chưa (tránh trùng socket hoặc lưu giữ vote nếu F5/reload)
+      let previousVote = null;
+      let previousHasVoted = false;
+      for (const [sId, m] of roomState.members.entries()) {
+        if (m.userId === user.id) {
+          previousVote = m.vote;
+          previousHasVoted = m.hasVoted;
+          roomState.members.delete(sId);
+        }
+      }
+
+      roomState.members.set(socket.id, {
+        socketId: socket.id,
+        userId: user.id,
+        fullName: user.fullName || user.email || 'Thành viên',
+        avatar: user.avatar || null,
+        vote: previousVote,
+        hasVoted: previousHasVoted
+      });
+
+      // Nếu người dùng đã từng vote trước đó, gửi riêng lại cho socket của họ
+      if (previousHasVoted && previousVote !== null) {
+        socket.emit("poker:yourVote", { vote: previousVote });
+      }
+
+      // Phát lại danh sách thành viên hiện tại cho tất cả mọi người trong phòng
+      const membersList = Array.from(roomState.members.values()).map(m => ({
+        userId: m.userId,
+        fullName: m.fullName,
+        avatar: m.avatar,
+        hasVoted: m.hasVoted,
+        vote: roomState.isRevealed ? m.vote : null
+      }));
+
+      io.to(roomChannel).emit("poker:stateUpdate", {
+        roomCode: cleanCode,
+        members: membersList,
+        isRevealed: roomState.isRevealed
+      });
+
+      // Gửi lịch sử thảo luận chat cho thành viên vừa vào phòng
+      socket.emit("poker:chatHistory", {
+        messages: roomState.messages || []
+      });
+    });
+
+    socket.on("poker:vote", ({ roomCode, vote }) => {
+      if (!roomCode) return;
+      const cleanCode = String(roomCode).toUpperCase().trim();
+      const roomChannel = `poker_${cleanCode}`;
+
+      if (global.pokerRoomsState && global.pokerRoomsState.has(cleanCode)) {
+        const roomState = global.pokerRoomsState.get(cleanCode);
+        const member = roomState.members.get(socket.id);
+        if (member) {
+          // AC2: Cho phép chọn hoặc đổi lá trước khi Reveal
+          if (!roomState.isRevealed) {
+            member.vote = vote;
+            member.hasVoted = vote !== null && vote !== undefined;
+            // Gửi xác nhận riêng cho socket của chính người đó
+            socket.emit("poker:yourVote", { vote: member.vote });
+          }
+        }
+
+        // AC1: Ẩn lá bài với người khác (vote: null) khi chưa Reveal; người khác CHỈ thấy hasVoted
+        const membersList = Array.from(roomState.members.values()).map(m => ({
+          userId: m.userId,
+          fullName: m.fullName,
+          avatar: m.avatar,
+          hasVoted: m.hasVoted,
+          vote: roomState.isRevealed ? m.vote : null
+        }));
+
+        io.to(roomChannel).emit("poker:stateUpdate", {
+          roomCode: cleanCode,
+          members: membersList,
+          isRevealed: roomState.isRevealed
+        });
+      }
+    });
+
+    socket.on("poker:reveal", ({ roomCode }) => {
+      if (!roomCode) return;
+      const cleanCode = String(roomCode).toUpperCase().trim();
+      const roomChannel = `poker_${cleanCode}`;
+
+      if (global.pokerRoomsState && global.pokerRoomsState.has(cleanCode)) {
+        const roomState = global.pokerRoomsState.get(cleanCode);
+
+        // AC2: Chặn lật bài khi chưa có lượt vote nào
+        const votedMembers = Array.from(roomState.members.values()).filter(m => m.hasVoted && m.vote !== null && m.vote !== undefined);
+        if (votedMembers.length === 0) {
+          socket.emit("poker:error", {
+            code: "NO_VOTES",
+            message: "Chưa có ai vote! Không thể lật bài khi chưa có lượt vote nào."
+          });
+          return;
+        }
+
+        roomState.isRevealed = true;
+
+        const membersList = Array.from(roomState.members.values()).map(m => ({
+          userId: m.userId,
+          fullName: m.fullName,
+          avatar: m.avatar,
+          hasVoted: m.hasVoted,
+          vote: m.vote
+        }));
+
+        io.to(roomChannel).emit("poker:stateUpdate", {
+          roomCode: cleanCode,
+          members: membersList,
+          isRevealed: true
+        });
+
+        // Thông báo hệ thống: Đã lật bài
+        const sysMsg = {
+          id: `sys_${Date.now()}_reveal`,
+          isSystem: true,
+          content: "👀 Các lá bài đã được lật! Mời các thành viên cùng thảo luận kết quả.",
+          createdAt: new Date().toISOString()
+        };
+        if (!roomState.messages) roomState.messages = [];
+        roomState.messages.push(sysMsg);
+        io.to(roomChannel).emit("poker:newMessage", sysMsg);
+      }
+    });
+
+    socket.on("poker:reset", ({ roomCode }) => {
+      if (!roomCode) return;
+      const cleanCode = String(roomCode).toUpperCase().trim();
+      const roomChannel = `poker_${cleanCode}`;
+
+      if (global.pokerRoomsState && global.pokerRoomsState.has(cleanCode)) {
+        const roomState = global.pokerRoomsState.get(cleanCode);
+        roomState.isRevealed = false;
+        roomState.members.forEach(m => {
+          m.vote = null;
+          m.hasVoted = false;
+        });
+
+        const membersList = Array.from(roomState.members.values()).map(m => ({
+          userId: m.userId,
+          fullName: m.fullName,
+          avatar: m.avatar,
+          hasVoted: false,
+          vote: null
+        }));
+
+        io.to(roomChannel).emit("poker:stateUpdate", {
+          roomCode: cleanCode,
+          members: membersList,
+          isRevealed: false
+        });
+        io.to(roomChannel).emit("poker:yourVote", { vote: null });
+
+        // Thông báo hệ thống: Vòng mới
+        const sysMsg = {
+          id: `sys_${Date.now()}_reset`,
+          isSystem: true,
+          content: "🔄 Vòng đánh giá mới đã bắt đầu.",
+          createdAt: new Date().toISOString()
+        };
+        if (!roomState.messages) roomState.messages = [];
+        roomState.messages.push(sysMsg);
+        io.to(roomChannel).emit("poker:newMessage", sysMsg);
+      }
+    });
+
+    // =========================================================================
+    // CHAT THẢO LUẬN REALTIME TRONG PHÒNG POKER
+    // =========================================================================
+    socket.on("poker:sendMessage", ({ roomCode, content, sender, tag }) => {
+      if (!roomCode || !content || !content.trim()) return;
+      const cleanCode = String(roomCode).toUpperCase().trim();
+      const roomChannel = `poker_${cleanCode}`;
+
+      if (global.pokerRoomsState && global.pokerRoomsState.has(cleanCode)) {
+        const roomState = global.pokerRoomsState.get(cleanCode);
+        if (!roomState.messages) roomState.messages = [];
+
+        const member = roomState.members.get(socket.id);
+        const user = sender || socket.pokerUser || (member ? {
+          id: member.userId,
+          fullName: member.fullName,
+          avatar: member.avatar
+        } : null);
+
+        const newMsg = {
+          id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          userId: user?.id || socket.id,
+          fullName: user?.fullName || member?.fullName || 'Thành viên',
+          avatar: user?.avatar || member?.avatar || null,
+          content: content.trim(),
+          tag: tag || null, // Ví dụ: 'Cao nhất', 'Thấp nhất', 'Rủi ro', 'Đơn giản'...
+          vote: (roomState.isRevealed && member) ? member.vote : null,
+          createdAt: new Date().toISOString()
+        };
+
+        roomState.messages.push(newMsg);
+        if (roomState.messages.length > 100) {
+          roomState.messages.shift();
+        }
+
+        io.to(roomChannel).emit("poker:newMessage", newMsg);
+      }
+    });
+
+    socket.on("poker:leave", ({ roomCode }) => {
+      if (!roomCode) return;
+      const cleanCode = String(roomCode).toUpperCase().trim();
+      const roomChannel = `poker_${cleanCode}`;
+      socket.leave(roomChannel);
+
+      if (global.pokerRoomsState && global.pokerRoomsState.has(cleanCode)) {
+        const roomState = global.pokerRoomsState.get(cleanCode);
+        roomState.members.delete(socket.id);
+
+        const membersList = Array.from(roomState.members.values()).map(m => ({
+          userId: m.userId,
+          fullName: m.fullName,
+          avatar: m.avatar,
+          hasVoted: m.hasVoted,
+          vote: roomState.isRevealed ? m.vote : null
+        }));
+
+        io.to(roomChannel).emit("poker:stateUpdate", {
+          roomCode: cleanCode,
+          members: membersList,
+          isRevealed: roomState.isRevealed
+        });
       }
     });
 
     socket.on("disconnect", (reason) => {
       console.log(`Socket disconnected: ${socket.id}, reason: ${reason}`);
+      if (socket.pokerRoomCode && global.pokerRoomsState && global.pokerRoomsState.has(socket.pokerRoomCode)) {
+        const roomState = global.pokerRoomsState.get(socket.pokerRoomCode);
+        roomState.members.delete(socket.id);
+        const membersList = Array.from(roomState.members.values()).map(m => ({
+          userId: m.userId,
+          fullName: m.fullName,
+          avatar: m.avatar,
+          hasVoted: m.hasVoted,
+          vote: roomState.isRevealed ? m.vote : null
+        }));
+        io.to(`poker_${socket.pokerRoomCode}`).emit("poker:stateUpdate", {
+          roomCode: socket.pokerRoomCode,
+          members: membersList,
+          isRevealed: roomState.isRevealed
+        });
+      }
     });
   });
 
@@ -305,6 +593,40 @@ function initSocket(server, prisma) {
           if (params.model === "Task") eventName = "task:changed";
           if (params.model === "Comment") eventName = "comment:changed";
 
+          let eventData = result;
+          // US-062: Đảm bảo dữ liệu phát qua WebSocket luôn kèm thông tin đầy đủ của Assignee
+          if (params.model === "Task" && ["create", "update"].includes(params.action) && result?.id && !result?.assignee) {
+            try {
+              const fullTask = await prisma.task.findUnique({
+                where: { id: result.id },
+                include: {
+                  assignee: { select: { id: true, fullName: true, email: true, avatar: true } }
+                }
+              });
+              if (fullTask) eventData = fullTask;
+            } catch (e) {
+              console.error("Lỗi fetch full task assignee:", e);
+            }
+          } else if (params.model === "UserStory" && ["create", "update"].includes(params.action) && result?.id && !result?.assignee) {
+            try {
+              const fullStory = await prisma.userStory.findUnique({
+                where: { id: result.id },
+                include: {
+                  assignee: { select: { id: true, fullName: true, email: true, avatar: true } },
+                  tasks: {
+                    include: {
+                      assignee: { select: { id: true, fullName: true, email: true, avatar: true } }
+                    }
+                  },
+                  comments: { select: { id: true } }
+                }
+              });
+              if (fullStory) eventData = fullStory;
+            } catch (e) {
+              console.error("Lỗi fetch full story assignee:", e);
+            }
+          }
+
           const eventId = `evt_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
           const entityId = result?.id || result?.userStoryId || result?.taskId || null;
           io.to(projectId).to(`project_${projectId}`).emit(eventName, {
@@ -313,7 +635,7 @@ function initSocket(server, prisma) {
             projectId,
             model: params.model,
             entityId,
-            data: result || null,
+            data: eventData || null,
             timestamp: Date.now()
           });
           console.log(`Emitted ${eventName} [${params.action}] to room ${projectId}`);
@@ -336,7 +658,7 @@ function initSocket(server, prisma) {
           }
 
           // --- US-029: In-app Notification (chỉ áp dụng cho Task và UserStory, không gửi thông báo rác cho Comment) ---
-          if (["create", "update", "delete"].includes(params.action) && params.model !== "Comment") {
+          if (["create", "update", "delete"].includes(params.action) && params.model === "UserStory") {
             const title = result?.title || "Một tác vụ";
             const type = params.model === "Task" ? "TASK_CHANGED" : "STORY_CHANGED";
             const actionText = params.action === "create" ? "được tạo mới" : params.action === "update" ? "đã được cập nhật" : "đã bị xóa";

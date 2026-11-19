@@ -23,7 +23,11 @@ model User {
   attachments     Attachment[]
   notificationsReceived Notification[] @relation("ReceivedNotifications")
   notificationsSent     Notification[] @relation("SentNotifications")
+  createdPokerRooms     PokerRoom[]    @relation("CreatedPokerRooms")
   contributions   MemberContribution[] // Đóng góp trong các Sprint
+  activityLogs    ActivityLog[]        @relation("ActorActivityLogs")
+  retroSessions   RetroSession[]       @relation("CreatedRetroSessions")
+  retroNotes      RetroNote[]          @relation("AuthoredRetroNotes")
 }
 
 model Project {
@@ -37,6 +41,10 @@ model Project {
   userStories UserStory[]
   sprints     Sprint[]
   standups    DailyStandup[]
+  notifications Notification[]
+  activityLogs  ActivityLog[]
+  pokerRooms    PokerRoom[]
+  retroSessions RetroSession[]
 }
 
 model ProjectMember {
@@ -63,6 +71,8 @@ model Sprint {
   stories   UserStory[]
   createdAt DateTime       @default(now())
   summary   SprintSummary? // Kết quả tổng kết Sprint
+  retroSessions RetroSession[]
+  standups  DailyStandup[]
 }
 
 model UserStory {
@@ -87,6 +97,7 @@ model UserStory {
   updatedAt    DateTime?   @updatedAt
   statusHistory UserStoryStatusHistory[]
   priorityOrder Int @default(0)
+  pokerRooms    PokerRoom[]
 }
 
 model UserStoryStatusHistory {
@@ -111,40 +122,65 @@ model Task {
   dueDate     DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  version     Int       @default(1)
   comments    Comment[]
   attachments Attachment[]
+  notifications Notification[]
+
+  @@index([id, version])
 }
 
 model DailyStandup {
-  id        String   @id @default(cuid())
-  yesterday String
-  today     String
-  blockers  String?
-  date      DateTime @default(now())
-  userId    String
-  projectId String
-  user      User     @relation(fields: [userId], references: [id])
-  project   Project  @relation(fields: [projectId], references: [id])
+  id            String   @id @default(cuid())
+  userId        String   @map("user_id")
+  sprintId      String   @map("sprint_id")
+  reportDate    DateTime @default(now()) @map("report_date") @db.Date
+  yesterdayWork String   @map("yesterday_work")
+  todayPlan     String   @map("today_plan")
+  blockers      String   @map("blockers")
 
+  // Tương thích ngược
+  yesterday     String?  @map("yesterday")
+  today         String?  @map("today")
+  date          DateTime @default(now()) @map("date")
+  projectId     String?  @map("project_id")
+
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sprint        Sprint   @relation(fields: [sprintId], references: [id], onDelete: Cascade)
+  project       Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, sprintId, reportDate], name: "userId_sprintId_reportDate")
+  @@index([sprintId, reportDate])
   @@index([projectId, date])
+  @@map("daily_standups")
 }
 
 model Comment {
-  id          String    @id @default(cuid())
-  content     String
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id               String      @id @default(cuid())
+  content          String
+  entityType       EntityType? @map("entity_type")
+  entityId         String?     @map("entity_id")
+  mentionedUserIds String[]    @default([]) @map("mentioned_user_ids")
+  isEdited         Boolean     @default(false) @map("is_edited")
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
 
   // Hỗ trợ cả UserStory lẫn Task (giữ nguyên dữ liệu cũ)
-  userStoryId String?
-  userStory   UserStory? @relation(fields: [userStoryId], references: [id], onDelete: Cascade)
+  userStoryId      String?
+  userStory        UserStory?  @relation(fields: [userStoryId], references: [id], onDelete: Cascade)
 
-  taskId      String?
-  task        Task?      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskId           String?
+  task             Task?       @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
-  userId      String
-  user        User       @relation(fields: [userId], references: [id])
+  userId           String
+  user             User        @relation(fields: [userId], references: [id])
 
+  attachments      Attachment[]
+
+  @@index([entityType, entityId, createdAt(sort: Desc)])
   @@map("comments")
 }
 model Attachment {
@@ -161,16 +197,23 @@ model Attachment {
   taskId      String?
   task        Task?      @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
+  commentId   String?    @map("comment_id")
+  comment     Comment?   @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
   userId      String
   user        User       @relation(fields: [userId], references: [id])
+
+  @@index([commentId])
 }
 
 model Notification {
   id          String   @id @default(cuid())
-  userId      String
-  senderId    String?
+  userId      String   // recipient_id (người nhận thông báo)
+  senderId    String?  // sender_id (người giao task)
+  taskId      String?  // task_id
+  projectId   String?  // project_id
   content     String
-  type        String   @default("SYSTEM") // SYSTEM, KICKED, TASK_CHANGED, v.v..
+  type        String   @default("TASK_ASSIGNED") // TASK_ASSIGNED, SYSTEM, KICKED, TASK_CHANGED, v.v..
   taskTitle   String?
   link        String?
   isRead      Boolean  @default(false)
@@ -178,6 +221,10 @@ model Notification {
   
   user        User     @relation("ReceivedNotifications", fields: [userId], references: [id], onDelete: Cascade)
   sender      User?    @relation("SentNotifications", fields: [senderId], references: [id], onDelete: SetNull)
+  task        Task?    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
 }
 
 // ============================================================
@@ -212,13 +259,107 @@ model MemberContribution {
   storiesCompleted Int           // Số User Story hoàn thành (status=DONE)
   storyPoints      Int           // Tổng SP của stories được assign và DONE
   hoursWorked      Int           // Tổng giờ làm việc (thực tế hoặc ước tính)
-  // JSON string chứa chỉ số đặc trưng theo vai trò:
-  // Tester: {"testCases": 50, "bugsFound": 12}
-  // Designer: {"screens": 10, "components": 5}
-  // Dev: {"commits": 30} (tương lai)
   specialMetric    String?       @default("{}")
   contributionPct  Float         // % đóng góp cuối cùng (tổng = 100%)
   createdAt        DateTime      @default(now())
 
   @@unique([summaryId, userId]) // Mỗi thành viên chỉ có 1 entry / Sprint
+}
+
+// ============================================================
+// MÔ-ĐUN AUDIT TRAIL / ACTIVITY LOGS (Immutable History)
+// ============================================================
+
+enum EntityType {
+  TASK
+  USER_STORY
+}
+
+enum ActionType {
+  CREATED
+  UPDATED_STATUS
+  UPDATED_ASSIGNEE
+  UPDATED_TITLE
+  UPDATED_DESCRIPTION
+  UPDATED_PRIORITY
+  ATTACHMENT_ADDED
+  ATTACHMENT_REMOVED
+  COMMENT_ADDED
+  COMMENT_UPDATED
+  COMMENT_DELETED
+}
+
+model ActivityLog {
+  id             String      @id @default(cuid())
+  projectId      String?     @map("project_id")
+  actorId        String?     @map("actor_id")
+  action         String?     @map("action")
+  targetType     String?     @map("target_type")
+  targetId       String?     @map("target_id")
+  targetTitle    String?     @map("target_title")
+  meta           Json?       @map("meta")
+  entityType     EntityType? @map("entity_type")
+  entityId       String?     @map("entity_id")
+  actionType     ActionType? @map("action_type")
+  changesPayload Json?       @map("changes_payload")
+  createdAt      DateTime    @default(now()) @map("created_at")
+
+  actor          User?       @relation("ActorActivityLogs", fields: [actorId], references: [id], onDelete: SetNull)
+  project        Project?    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt(sort: Desc)])
+  @@index([entityType, entityId, createdAt(sort: Desc)])
+  @@map("activity_logs")
+}
+
+
+model PokerRoom {
+  id          String    @id @default(cuid())
+  roomCode    String    @unique
+  name        String
+  status      String    @default("ACTIVE") // ACTIVE, CLOSED
+  storyId     String
+  userStory   UserStory @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdById String
+  createdBy   User      @relation("CreatedPokerRooms", fields: [createdById], references: [id])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([storyId])
+  @@index([projectId])
+  @@index([roomCode])
+}
+
+model RetroSession {
+  id          String      @id @default(cuid())
+  projectId   String
+  sprintId    String?
+  title       String
+  status      String      @default("OPEN") // OPEN, CLOSED
+  createdById String
+  createdAt   DateTime    @default(now())
+
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sprint      Sprint?     @relation(fields: [sprintId], references: [id], onDelete: SetNull)
+  createdBy   User        @relation("CreatedRetroSessions", fields: [createdById], references: [id])
+  notes       RetroNote[]
+
+  @@index([projectId])
+}
+
+model RetroNote {
+  id          String       @id @default(cuid())
+  sessionId   String
+  column      String       // WENT_WELL, TO_IMPROVE, ACTION_ITEM
+  content     String
+  authorId    String
+  isAnonymous Boolean      @default(false)
+  createdAt   DateTime     @default(now())
+
+  session     RetroSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  author      User         @relation("AuthoredRetroNotes", fields: [authorId], references: [id])
+
+  @@index([sessionId])
 }

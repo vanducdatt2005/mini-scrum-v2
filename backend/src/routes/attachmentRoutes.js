@@ -1,3 +1,4 @@
+const { recordActivity } = require('../services/activityService');
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -67,6 +68,18 @@ router.post('/upload', authMiddleware, upload.single('file'), async (req, res) =
                 taskId: taskId || null
             }
         });
+        recordActivity({
+            entityType: taskId ? 'TASK' : 'USER_STORY',
+            entityId: taskId || userStoryId,
+            actorId: req.user.userId,
+            actionType: 'ATTACHMENT_ADDED',
+            changesPayload: {
+                attachmentId: attachment.id,
+                fileName: req.file.originalname,
+                fileSize: req.file.size
+            }
+        });
+
         res.status(201).json(attachment);
     } catch (error) {
         console.error("Lỗi upload attachment:", error);
@@ -77,6 +90,19 @@ router.post('/upload', authMiddleware, upload.single('file'), async (req, res) =
 // API xóa file
 router.delete('/:id', authMiddleware, async (req, res) => {
     try {
+        const att = await prisma.attachment.findUnique({ where: { id: req.params.id } });
+        if (att) {
+            recordActivity({
+                entityType: att.taskId ? 'TASK' : 'USER_STORY',
+                entityId: att.taskId || att.userStoryId,
+                actorId: req.user.userId,
+                actionType: 'ATTACHMENT_REMOVED',
+                changesPayload: {
+                    attachmentId: att.id,
+                    fileName: att.fileName
+                }
+            });
+        }
         await prisma.attachment.delete({ where: { id: req.params.id } });
         res.json({ message: "Xóa file thành công" });
     } catch (error) {

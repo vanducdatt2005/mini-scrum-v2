@@ -14,7 +14,7 @@ const path = require('path');
 const commentRoutes = require('./routes/commentRoutes');
 const attachmentRoutes = require('./routes/attachmentRoutes');
 const sprintCeremonyRoutes = require('./routes/sprintCeremonyRoutes');
-const sprintSummaryRoutes  = require('./routes/sprintSummaryRoutes');
+const sprintSummaryRoutes = require('./routes/sprintSummaryRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const activityRoutes = require('./routes/activityRoutes');
 const retroRoutes = require('./routes/retroRoutes');
@@ -52,13 +52,13 @@ app.use(cors({
 // }));
 
 //app.use(cors({
-  //origin: function (origin, callback) {
-    // Cho phép tất cả origin trong quá trình dev (bao gồm cả không có origin - Postman, mobile,...)
-    //callback(null, true);
-  //},
-  //methods: ['GET', 'POST', 'PATCH', 'DELETE', 'PUT', 'OPTIONS'],
-  //allowedHeaders: ['Content-Type', 'Authorization'],
-  //credentials: true
+//origin: function (origin, callback) {
+// Cho phép tất cả origin trong quá trình dev (bao gồm cả không có origin - Postman, mobile,...)
+//callback(null, true);
+//},
+//methods: ['GET', 'POST', 'PATCH', 'DELETE', 'PUT', 'OPTIONS'],
+//allowedHeaders: ['Content-Type', 'Authorization'],
+//credentials: true
 //}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -106,7 +106,7 @@ app.get("/", (req, res) => {
 // US-001: ĐĂNG KÝ
 app.post("/api/register", async (req, res) => {
   const { email, password, fullName } = req.body;
-  
+
   // Validation password strength
   const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
   if (!passwordRegex.test(password)) {
@@ -1073,24 +1073,24 @@ app.patch("/api/sprint/:id", authMiddleware, async (req, res) => {
       return res.status(403).json({ error: "Bạn không có quyền cập nhật Sprint." });
     }
 
-      // == US-049: Kiểm tra xung đột và quyền hạn khi Bắt đầu Sprint (Start Sprint) ==
-      if (status === 'ACTIVE' && sprint.status !== 'ACTIVE') {
-        if (member.role !== "SM" && member.role !== "PO") {
-          return res.status(403).json({ error: "Chỉ Scrum Master hoặc Product Owner (Chủ dự án) mới có quyền bắt đầu Sprint!" });
-        }
-
-        // BẮT BUỘC PHẢI CÓ END DATE KHI BẮT ĐẦU SPRINT
-        if (!endDate && !sprint.endDate) {
-          return res.status(400).json({ error: "Vui lòng thiết lập ngày kết thúc cho Sprint trước khi bắt đầu!" });
-        }
-
-        const activeSprint = await prisma.sprint.findFirst({
-          where: { projectId: sprint.projectId, status: 'ACTIVE' }
-        });
-        if (activeSprint) {
-          return res.status(400).json({ error: `Dự án hiện đã có một Sprint đang hoạt động (${activeSprint.name}). Vui lòng kết thúc nó trước khi bắt đầu Sprint mới.` });
-        }
+    // == US-049: Kiểm tra xung đột và quyền hạn khi Bắt đầu Sprint (Start Sprint) ==
+    if (status === 'ACTIVE' && sprint.status !== 'ACTIVE') {
+      if (member.role !== "SM" && member.role !== "PO") {
+        return res.status(403).json({ error: "Chỉ Scrum Master hoặc Product Owner (Chủ dự án) mới có quyền bắt đầu Sprint!" });
       }
+
+      // BẮT BUỘC PHẢI CÓ END DATE KHI BẮT ĐẦU SPRINT
+      if (!endDate && !sprint.endDate) {
+        return res.status(400).json({ error: "Vui lòng thiết lập ngày kết thúc cho Sprint trước khi bắt đầu!" });
+      }
+
+      const activeSprint = await prisma.sprint.findFirst({
+        where: { projectId: sprint.projectId, status: 'ACTIVE' }
+      });
+      if (activeSprint) {
+        return res.status(400).json({ error: `Dự án hiện đã có một Sprint đang hoạt động (${activeSprint.name}). Vui lòng kết thúc nó trước khi bắt đầu Sprint mới.` });
+      }
+    }
 
     // == US-050: Logic kết thúc Sprint (Complete Sprint) ==
     if (status === 'COMPLETED' && sprint.status === 'ACTIVE') {
@@ -1203,7 +1203,7 @@ app.get("/api/analytics/:projectId/sprint/:sprintId/burndown", authMiddleware, a
 
     if (!sprint || !sprint.startDate || !sprint.endDate) {
       // Thay vì 400, trả về mảng rỗng và info để frontend hiển thị thông báo nhẹ nhàng hơn nếu cần
-      return res.json({ 
+      return res.json({
         error: "Sprint chưa có ngày bắt đầu/kết thúc.",
         data: [],
         details: "Vui lòng thiết lập ngày tháng cho Sprint để xem biểu đồ Burndown."
@@ -1316,7 +1316,7 @@ app.get("/api/analytics/:projectId/velocity", authMiddleware, async (req, res) =
       const completed = sprint.stories
         .filter(s => s.status === 'DONE')
         .reduce((sum, s) => sum + (s.storyPoints || 0), 0);
-      
+
       return {
         name: sprint.name,
         commitment,
@@ -1347,12 +1347,12 @@ app.get("/api/analytics/:projectId/sprint/:sprintId/report", authMiddleware, asy
     }
     const sprint = await prisma.sprint.findUnique({
       where: { id: sprintId },
-      include: { 
-        stories: { 
-          include: { 
+      include: {
+        stories: {
+          include: {
             tasks: true,
             assignee: { select: { fullName: true } }
-          } 
+          }
         },
         project: true
       }
@@ -1401,7 +1401,7 @@ app.get("/api/analytics/:projectId/sprint/:sprintId/report", authMiddleware, asy
     if (format === 'pdf') {
       const PDFDocument = require('pdfkit');
       const doc = new PDFDocument({ margin: 50 });
-      
+
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''Sprint_Report_${safeSprintName}.pdf`);
       doc.pipe(res);
@@ -1416,7 +1416,7 @@ app.get("/api/analytics/:projectId/sprint/:sprintId/report", authMiddleware, asy
 
       doc.fontSize(24).fillColor('#0052CC').text(`Báo cáo Sprint: ${sprint.name}`, { align: 'center' });
       doc.moveDown();
-      
+
       doc.fontSize(12).fillColor('#172B4D').text(`Dự án: ${sprint.project.name}`);
       doc.text(`Thời gian: ${sprint.startDate ? new Date(sprint.startDate).toLocaleDateString('vi-VN') : 'N/A'} - ${sprint.endDate ? new Date(sprint.endDate).toLocaleDateString('vi-VN') : 'N/A'}`);
       doc.text(`Mục tiêu: ${sprint.goal || 'Không có mục tiêu cụ thể'}`);
@@ -1429,8 +1429,8 @@ app.get("/api/analytics/:projectId/sprint/:sprintId/report", authMiddleware, asy
         sprint.stories.forEach((s, index) => {
           doc.fontSize(14).fillColor('#172B4D').text(`${index + 1}. ${s.title}`);
           doc.fontSize(11).fillColor('#6B778C')
-             .text(`   Trạng thái: ${s.status} | Điểm: ${s.storyPoints || 0}`)
-             .text(`   Người thực hiện: ${s.assignee?.fullName || 'Chưa gán'}`);
+            .text(`   Trạng thái: ${s.status} | Điểm: ${s.storyPoints || 0}`)
+            .text(`   Người thực hiện: ${s.assignee?.fullName || 'Chưa gán'}`);
           doc.moveDown(0.5);
         });
       } else {
@@ -1647,7 +1647,7 @@ app.delete("/api/project/:projectId", authMiddleware, async (req, res) => {
     // 2. Thực hiện xóa toàn bộ dữ liệu liên quan trong transaction
     await prisma.$transaction(async (tx) => {
       // Vì schema có nhiều quan hệ không cascade, ta xóa thủ công theo thứ tự
-      
+
       // Xóa Daily Standups
       await tx.dailyStandup.deleteMany({ where: { projectId } });
 
@@ -1661,7 +1661,7 @@ app.delete("/api/project/:projectId", authMiddleware, async (req, res) => {
 
       // Xóa Tasks liên quan
       await tx.task.deleteMany({ where: { storyId: { in: storyIds } } });
-      
+
       // Xóa User Stories
       await tx.userStory.deleteMany({ where: { projectId } });
 
@@ -2057,6 +2057,12 @@ app.patch("/api/tasks/:id", authMiddleware, async (req, res) => {
 
     const projectId = currentTask.userStory?.projectId;
 
+    // US-64: Kiểm tra quyền thành viên dự án (403)
+    const member = await prisma.projectMember.findUnique({
+      where: { userId_projectId: { userId: req.user.userId, projectId } }
+    });
+    if (!member) return res.status(403).json({ error: "Bạn không có quyền chỉnh sửa task này" });
+
     // Phân quyền gán Task: Chỉ PO hoặc SM mới có quyền gán hoặc đổi assignee của Task
     if (assigneeId !== undefined && String(assigneeId) !== String(currentTask.assigneeId)) {
       const isPOorSM = await checkPOorSM(req.user.userId, projectId);
@@ -2372,15 +2378,15 @@ app.patch("/api/user/profile", authMiddleware, (req, res) => {
     if (err) {
       return res.status(400).json({ error: err.message });
     }
-    
+
     const { fullName } = req.body;
     const updateData = {};
-    
+
     if (fullName !== undefined) {
       if (!fullName || fullName.trim() === '') {
         return res.status(400).json({ error: "Họ và tên không được để trống" });
       }
-      
+
       // Kiểm tra ký tự đặc biệt (@, #, $, ...)
       const specialCharRegex = /[@#\$%\^&\*\(\)\+=\{\}\[\]\<\>\?\/\\\|~`_]/;
       if (specialCharRegex.test(fullName)) {
@@ -2388,11 +2394,11 @@ app.patch("/api/user/profile", authMiddleware, (req, res) => {
       }
       updateData.fullName = fullName.trim();
     }
-    
+
     if (req.file) {
       updateData.avatar = `/uploads/${req.file.filename}`;
     }
-    
+
     try {
       const updatedUser = await prisma.user.update({
         where: { id: req.user.userId },
@@ -2410,41 +2416,41 @@ app.patch("/api/user/profile", authMiddleware, (req, res) => {
 // POST Change Password
 app.post("/api/user/change-password", authMiddleware, async (req, res) => {
   const { currentPassword, newPassword, confirmPassword } = req.body;
-  
+
   if (!currentPassword || !newPassword || !confirmPassword) {
     return res.status(400).json({ error: "Vui lòng điền đầy đủ tất cả các trường mật khẩu" });
   }
-  
+
   if (newPassword !== confirmPassword) {
     return res.status(400).json({ error: "Mật khẩu xác nhận không khớp" });
   }
-  
+
   // Validate new password strength (at least 8 chars, letter + number)
   const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
   if (!passwordRegex.test(newPassword)) {
     return res.status(400).json({ error: "Mật khẩu mới phải từ 8 ký tự trở lên, bao gồm cả chữ và số" });
   }
-  
+
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user.userId }
     });
-    
+
     if (!user) {
       return res.status(404).json({ error: "Không tìm thấy người dùng" });
     }
-    
+
     const isMatch = await bcrypt.compare(currentPassword, user.password);
     if (!isMatch) {
       return res.status(400).json({ error: "Mật khẩu hiện tại không chính xác" });
     }
-    
+
     const hashed = await bcrypt.hash(newPassword, 10);
     await prisma.user.update({
       where: { id: req.user.userId },
       data: { password: hashed }
     });
-    
+
     res.json({ message: "Đổi mật khẩu thành công!" });
   } catch (err) {
     console.error("Change password error:", err);

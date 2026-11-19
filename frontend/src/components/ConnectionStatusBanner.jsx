@@ -70,12 +70,12 @@ export default function ConnectionStatusBanner() {
             </div>
 
             <div className="flex items-center gap-2 mt-2 sm:mt-0 w-full sm:w-auto justify-end">
-              <button
+              {/* <button
                 onClick={() => setShowSimModal(true)}
                 className="text-xs px-2.5 py-1.5 rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-800 dark:text-rose-200 font-medium transition-colors cursor-pointer"
               >
                 🧪 Giả lập
-              </button>
+              </button> */}
               <button
                 onClick={manualReconnect}
                 className="px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-bold text-xs shadow-md transition-all flex items-center gap-1.5 cursor-pointer"

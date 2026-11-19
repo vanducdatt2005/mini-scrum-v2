@@ -350,15 +350,16 @@ model RetroSession {
 }
 
 model RetroNote {
-  id        String       @id @default(cuid())
-  sessionId String
-  column    String       // WENT_WELL, TO_IMPROVE, ACTION_ITEM
-  content   String
-  authorId  String
-  createdAt DateTime     @default(now())
+  id          String       @id @default(cuid())
+  sessionId   String
+  column      String       // WENT_WELL, TO_IMPROVE, ACTION_ITEM
+  content     String
+  authorId    String
+  isAnonymous Boolean      @default(false)
+  createdAt   DateTime     @default(now())
 
-  session   RetroSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  author    User         @relation("AuthoredRetroNotes", fields: [authorId], references: [id])
+  session     RetroSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  author      User         @relation("AuthoredRetroNotes", fields: [authorId], references: [id])
 
   @@index([sessionId])
 }

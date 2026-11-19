@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "RetroNote" ADD COLUMN IF NOT EXISTS "isAnonymous" BOOLEAN NOT NULL DEFAULT false;
+

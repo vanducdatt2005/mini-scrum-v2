@@ -3,6 +3,7 @@ const router = express.Router();
 const jwt = require('jsonwebtoken');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { getIO } = require('../socket');
 
 // Auth middleware
 const authMiddleware = (req, res, next) => {
@@ -20,6 +21,38 @@ const authMiddleware = (req, res, next) => {
 };
 
 const getUserId = (req) => req.user?.userId || req.user?.id;
+
+/**
+ * Hàm serialize note dùng chung cho API và socket (SCRUM-74)
+ * Trả {id, sessionId, column, content, createdAt, isAnonymous, isMine?, author?}
+ * - isAnonymous = true: KHÔNG có author/authorId/tên/email trong payload với BẤT KỲ ai, kể cả Scrum Master/Admin.
+ * - isAnonymous = false: trả author {id, name}.
+ * - isMine tính theo người gọi API (khi có currentUserId). Socket broadcast không chứa isMine/authorId.
+ */
+function serializeRetroNote(note, currentUserId = null) {
+  const isAnonymous = Boolean(note.isAnonymous);
+  const result = {
+    id: note.id,
+    sessionId: note.sessionId,
+    column: note.column,
+    content: note.content,
+    createdAt: note.createdAt,
+    isAnonymous,
+  };
+
+  if (currentUserId !== null && currentUserId !== undefined) {
+    result.isMine = Boolean(note.authorId && note.authorId === currentUserId);
+  }
+
+  if (!isAnonymous) {
+    result.author = {
+      id: note.author?.id || note.authorId,
+      name: note.author?.fullName || note.author?.name || 'Thành viên',
+    };
+  }
+
+  return result;
+}
 
 // Check if user is a member of the project
 async function isProjectMember(userId, projectId) {
@@ -175,7 +208,9 @@ router.get('/retros/:id', authMiddleware, async (req, res) => {
       ACTION_ITEM: [],
     };
 
-    (session.notes || []).forEach((note) => {
+    const serializedNotes = (session.notes || []).map((note) => serializeRetroNote(note, userId));
+
+    serializedNotes.forEach((note) => {
       if (columns[note.column]) {
         columns[note.column].push(note);
       }
@@ -183,6 +218,7 @@ router.get('/retros/:id', authMiddleware, async (req, res) => {
 
     return res.json({
       ...session,
+      notes: serializedNotes,
       columns,
     });
   } catch (err) {
@@ -194,7 +230,7 @@ router.get('/retros/:id', authMiddleware, async (req, res) => {
 /**
  * POST /retros/:id/notes
  * Thêm sticky note vào buổi Retrospective
- * content: 1-500 ký tự; buổi CLOSED -> 400
+ * content: 1-500 ký tự; isAnonymous: boolean; buổi CLOSED -> 400
  */
 router.post('/retros/:id/notes', authMiddleware, async (req, res) => {
   try {
@@ -218,7 +254,7 @@ router.post('/retros/:id/notes', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Buổi Retrospective đã kết thúc, không thể thêm ghi chú' });
     }
 
-    const { column, content } = req.body;
+    const { column, content, isAnonymous } = req.body;
     const validColumns = ['WENT_WELL', 'TO_IMPROVE', 'ACTION_ITEM'];
 
     if (!column || !validColumns.includes(column)) {
@@ -235,6 +271,7 @@ router.post('/retros/:id/notes', authMiddleware, async (req, res) => {
         column,
         content: content.trim(),
         authorId: userId,
+        isAnonymous: Boolean(isAnonymous),
       },
       include: {
         author: {
@@ -243,10 +280,134 @@ router.post('/retros/:id/notes', authMiddleware, async (req, res) => {
       },
     });
 
-    return res.status(201).json(note);
+    // Realtime emit vào room project_{projectId}
+    const io = getIO();
+    if (io) {
+      const socketPayload = serializeRetroNote(note); // không chứa isMine hay authorId nếu anonymous
+      io.to(`project_${session.projectId}`).to(session.projectId).emit('RETRO_NOTE_CREATED', socketPayload);
+    }
+
+    return res.status(201).json(serializeRetroNote(note, userId));
   } catch (err) {
     console.error('Lỗi thêm sticky note Retrospective:', err);
     return res.status(500).json({ error: 'Lỗi server khi thêm sticky note: ' + err.message });
+  }
+});
+
+/**
+ * PATCH /retros/:id/notes/:noteId
+ * Chỉnh sửa sticky note (chỉ tác giả, không đổi isAnonymous)
+ */
+router.patch('/retros/:id/notes/:noteId', authMiddleware, async (req, res) => {
+  try {
+    const { id, noteId } = req.params;
+    const userId = getUserId(req);
+
+    const note = await prisma.retroNote.findUnique({
+      where: { id: noteId },
+      include: {
+        session: true,
+        author: {
+          select: { id: true, fullName: true, email: true, avatar: true },
+        },
+      },
+    });
+
+    if (!note || note.sessionId !== id) {
+      return res.status(404).json({ error: 'Không tìm thấy ghi chú' });
+    }
+
+    const isMember = await isProjectMember(userId, note.session.projectId);
+    if (!isMember) {
+      return res.status(403).json({ error: 'Bạn không có quyền truy cập dự án này' });
+    }
+
+    if (note.authorId !== userId) {
+      return res.status(403).json({ error: 'Chỉ tác giả mới có quyền chỉnh sửa ghi chú này' });
+    }
+
+    if (note.session.status === 'CLOSED') {
+      return res.status(400).json({ error: 'Buổi Retrospective đã kết thúc, không thể chỉnh sửa ghi chú' });
+    }
+
+    const { content } = req.body;
+    if (!content || typeof content !== 'string' || content.trim().length === 0 || content.trim().length > 500) {
+      return res.status(400).json({ error: 'Nội dung ghi chú phải từ 1 đến 500 ký tự' });
+    }
+
+    const updatedNote = await prisma.retroNote.update({
+      where: { id: noteId },
+      data: {
+        content: content.trim(),
+        // Sửa không đổi isAnonymous
+      },
+      include: {
+        author: {
+          select: { id: true, fullName: true, email: true, avatar: true },
+        },
+      },
+    });
+
+    const io = getIO();
+    if (io) {
+      const socketPayload = serializeRetroNote(updatedNote);
+      io.to(`project_${note.session.projectId}`).to(note.session.projectId).emit('RETRO_NOTE_UPDATED', socketPayload);
+    }
+
+    return res.json(serializeRetroNote(updatedNote, userId));
+  } catch (err) {
+    console.error('Lỗi cập nhật sticky note Retrospective:', err);
+    return res.status(500).json({ error: 'Lỗi server khi cập nhật sticky note: ' + err.message });
+  }
+});
+
+/**
+ * DELETE /retros/:id/notes/:noteId
+ * Xóa sticky note (chỉ tác giả)
+ */
+router.delete('/retros/:id/notes/:noteId', authMiddleware, async (req, res) => {
+  try {
+    const { id, noteId } = req.params;
+    const userId = getUserId(req);
+
+    const note = await prisma.retroNote.findUnique({
+      where: { id: noteId },
+      include: {
+        session: true,
+      },
+    });
+
+    if (!note || note.sessionId !== id) {
+      return res.status(404).json({ error: 'Không tìm thấy ghi chú' });
+    }
+
+    const isMember = await isProjectMember(userId, note.session.projectId);
+    if (!isMember) {
+      return res.status(403).json({ error: 'Bạn không có quyền truy cập dự án này' });
+    }
+
+    if (note.authorId !== userId) {
+      return res.status(403).json({ error: 'Chỉ tác giả mới có quyền xóa ghi chú này' });
+    }
+
+    if (note.session.status === 'CLOSED') {
+      return res.status(400).json({ error: 'Buổi Retrospective đã kết thúc, không thể xóa ghi chú' });
+    }
+
+    await prisma.retroNote.delete({
+      where: { id: noteId },
+    });
+
+    const io = getIO();
+    if (io) {
+      // DELETED chỉ cần { id }
+      io.to(`project_${note.session.projectId}`).to(note.session.projectId).emit('RETRO_NOTE_DELETED', { id: noteId, sessionId: id });
+    }
+
+    return res.json({ message: 'Đã xóa ghi chú thành công', id: noteId });
+  } catch (err) {
+    console.error('Lỗi xóa sticky note Retrospective:', err);
+    return res.status(500).json({ error: 'Lỗi server khi xóa sticky note: ' + err.message });
   }
 });
 
@@ -302,4 +463,5 @@ router.patch('/retros/:id', authMiddleware, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.serializeRetroNote = serializeRetroNote;
 

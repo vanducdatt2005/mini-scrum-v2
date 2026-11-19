@@ -1,12 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import MainLayout from '../components/MainLayout';
+import { useAuth } from '../context/AuthContext';
+import { getSocket } from '../hooks/useSocket';
+import { onSocketReconnect } from '../context/SocketContext';
 import api, {
   getProjectRetros,
   createProjectRetro,
   getRetroDetails,
   addRetroNote,
+  updateRetroNote,
+  deleteRetroNote,
   updateRetroSession,
   getSprintsByProject,
   getAvatarUrl,
@@ -60,9 +65,15 @@ const COLUMNS = [
 export default function RetroPage() {
   const { projectId } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const [sessions, setSessions] = useState([]);
   const [activeSession, setActiveSession] = useState(null);
+  const activeSessionRef = useRef(activeSession);
+  useEffect(() => {
+    activeSessionRef.current = activeSession;
+  }, [activeSession]);
+
   const [columnsData, setColumnsData] = useState({
     WENT_WELL: [],
     TO_IMPROVE: [],
@@ -84,6 +95,18 @@ export default function RetroPage() {
     TO_IMPROVE: '',
     ACTION_ITEM: '',
   });
+
+  // Checkbox ẩn danh theo từng cột (SCRUM-74)
+  const [anonymousInputs, setAnonymousInputs] = useState({
+    WENT_WELL: false,
+    TO_IMPROVE: false,
+    ACTION_ITEM: false,
+  });
+
+  // State chỉnh sửa note (SCRUM-74)
+  const [editingNoteId, setEditingNoteId] = useState(null);
+  const [editingContent, setEditingContent] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
 
   // Tải danh sách buổi khi mở trang
   useEffect(() => {
@@ -130,8 +153,8 @@ export default function RetroPage() {
     }
   };
 
-  const selectSession = async (sessionId) => {
-    setLoadingSession(true);
+  const selectSession = async (sessionId, showLoading = true) => {
+    if (showLoading) setLoadingSession(true);
     try {
       const res = await getRetroDetails(sessionId);
       setActiveSession(res.data);
@@ -146,9 +169,133 @@ export default function RetroPage() {
       console.error('Lỗi tải chi tiết buổi Retrospective:', err);
       toast.error(err.response?.data?.error || 'Không thể tải chi tiết buổi Retrospective');
     } finally {
-      setLoadingSession(false);
+      if (showLoading) setLoadingSession(false);
     }
   };
+
+  // Upsert note theo id (SCRUM-63 & SCRUM-74)
+  const upsertNote = (incoming) => {
+    if (!incoming || !incoming.id || !incoming.column) return;
+    setColumnsData((prev) => {
+      let existingNote = null;
+      for (const colKey of Object.keys(prev)) {
+        const found = prev[colKey].find((n) => n.id === incoming.id);
+        if (found) {
+          existingNote = found;
+          break;
+        }
+      }
+
+      const targetCol = incoming.column;
+      const isMine =
+        existingNote && existingNote.isMine !== undefined
+          ? existingNote.isMine
+          : (incoming.isMine !== undefined ? incoming.isMine : false);
+
+      const mergedNote = {
+        ...incoming,
+        isMine,
+      };
+
+      const nextState = {};
+      for (const colKey of Object.keys(prev)) {
+        if (colKey === targetCol) {
+          const list = prev[colKey];
+          // Check if there is an optimistic note to replace
+          const optIdx = list.findIndex(
+            (n) => n._isOptimistic && n.content === incoming.content && n.column === incoming.column
+          );
+          const existingIdx = list.findIndex((n) => n.id === incoming.id);
+
+          if (existingIdx >= 0) {
+            const updatedList = [...list];
+            updatedList[existingIdx] = mergedNote;
+            nextState[colKey] = updatedList;
+          } else if (optIdx >= 0) {
+            const updatedList = [...list];
+            updatedList[optIdx] = { ...mergedNote, isMine: true };
+            nextState[colKey] = updatedList;
+          } else {
+            nextState[colKey] = [...list, mergedNote];
+          }
+        } else {
+          nextState[colKey] = prev[colKey].filter((n) => n.id !== incoming.id);
+        }
+      }
+      return nextState;
+    });
+  };
+
+  const removeNote = (noteId) => {
+    if (!noteId) return;
+    setColumnsData((prev) => {
+      const nextState = {};
+      let changed = false;
+      for (const colKey of Object.keys(prev)) {
+        const filtered = prev[colKey].filter((n) => n.id !== noteId);
+        if (filtered.length !== prev[colKey].length) changed = true;
+        nextState[colKey] = filtered;
+      }
+      return changed ? nextState : prev;
+    });
+  };
+
+  // Realtime Socket Listeners (SCRUM-59, SCRUM-74)
+  useEffect(() => {
+    if (!projectId) return;
+    const socket = getSocket();
+    if (!socket) return;
+
+    socket.emit('joinProject', projectId);
+
+    const handleCreated = (note) => {
+      if (activeSessionRef.current && note.sessionId && note.sessionId !== activeSessionRef.current.id) {
+        return;
+      }
+      upsertNote(note);
+    };
+
+    const handleUpdated = (note) => {
+      if (activeSessionRef.current && note.sessionId && note.sessionId !== activeSessionRef.current.id) {
+        return;
+      }
+      upsertNote(note);
+    };
+
+    const handleDeleted = (data) => {
+      const deletedId = data?.id;
+      if (!deletedId) return;
+      removeNote(deletedId);
+    };
+
+    const handleReconnect = () => {
+      if (activeSessionRef.current?.id) {
+        getRetroDetails(activeSessionRef.current.id)
+          .then((res) => {
+            if (res.data?.columns) {
+              setColumnsData(res.data.columns);
+            }
+          })
+          .catch((err) => {
+            console.error('Lỗi tải lại ghi chú sau khi kết nối lại:', err);
+          });
+      }
+    };
+
+    socket.on('RETRO_NOTE_CREATED', handleCreated);
+    socket.on('RETRO_NOTE_UPDATED', handleUpdated);
+    socket.on('RETRO_NOTE_DELETED', handleDeleted);
+    socket.on('connect', handleReconnect);
+    const offReconnect = onSocketReconnect(handleReconnect);
+
+    return () => {
+      socket.off('RETRO_NOTE_CREATED', handleCreated);
+      socket.off('RETRO_NOTE_UPDATED', handleUpdated);
+      socket.off('RETRO_NOTE_DELETED', handleDeleted);
+      socket.off('connect', handleReconnect);
+      offReconnect();
+    };
+  }, [projectId]);
 
   const handleCreateSession = async (e) => {
     e.preventDefault();
@@ -199,6 +346,7 @@ export default function RetroPage() {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       const content = inputs[columnId]?.trim();
+      const isAnon = Boolean(anonymousInputs[columnId]);
 
       if (!content) {
         toast.error('Nội dung ghi chú không được để trống');
@@ -215,24 +363,146 @@ export default function RetroPage() {
         return;
       }
 
+      const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const optimisticNote = {
+        id: tempId,
+        sessionId: activeSession.id,
+        column: columnId,
+        content,
+        isAnonymous: isAnon,
+        isMine: true,
+        createdAt: new Date().toISOString(),
+        ...(isAnon
+          ? {}
+          : {
+              author: {
+                id: user?.id,
+                name: user?.fullName || user?.name || 'Tôi',
+              },
+            }),
+        _isOptimistic: true,
+      };
+
+      // Cập nhật giao diện ngay lập tức (TC-US074-18)
+      setColumnsData((prev) => ({
+        ...prev,
+        [columnId]: [...(prev[columnId] || []), optimisticNote],
+      }));
+      setInputs((prev) => ({ ...prev, [columnId]: '' }));
+
       try {
         const res = await addRetroNote(activeSession.id, {
           column: columnId,
           content,
+          isAnonymous: isAnon,
         });
 
-        const newNote = res.data;
-        setColumnsData((prev) => ({
-          ...prev,
-          [columnId]: [...(prev[columnId] || []), newNote],
-        }));
-
-        setInputs((prev) => ({ ...prev, [columnId]: '' }));
+        const realNote = res.data;
+        setColumnsData((prev) => {
+          const colNotes = prev[columnId] || [];
+          const alreadyExists = colNotes.some((n) => n.id === realNote.id);
+          if (alreadyExists) {
+            return {
+              ...prev,
+              [columnId]: colNotes
+                .filter((n) => n.id !== tempId)
+                .map((n) => (n.id === realNote.id ? { ...n, isMine: true } : n)),
+            };
+          }
+          return {
+            ...prev,
+            [columnId]: colNotes.map((n) => (n.id === tempId ? { ...realNote, isMine: true } : n)),
+          };
+        });
         toast.success('Đã thêm ghi chú');
       } catch (err) {
+        // Khôi phục trạng thái cũ khi lỗi (TC-US074-19)
+        setColumnsData((prev) => ({
+          ...prev,
+          [columnId]: (prev[columnId] || []).filter((n) => n.id !== tempId),
+        }));
+        setInputs((prev) => ({ ...prev, [columnId]: content }));
         console.error('Lỗi thêm ghi chú:', err);
         toast.error(err.response?.data?.error || 'Không thể thêm ghi chú');
       }
+    }
+  };
+
+  // Sửa ghi chú (SCRUM-74)
+  const startEditNote = (note) => {
+    setEditingNoteId(note.id);
+    setEditingContent(note.content);
+  };
+
+  const cancelEditNote = () => {
+    setEditingNoteId(null);
+    setEditingContent('');
+  };
+
+  const handleSaveEditNote = async (note) => {
+    const trimmed = editingContent.trim();
+    if (!trimmed) {
+      toast.error('Nội dung ghi chú không được để trống');
+      return;
+    }
+    if (trimmed.length > 500) {
+      toast.error('Nội dung không được vượt quá 500 ký tự');
+      return;
+    }
+
+    const oldContent = note.content;
+    const colId = note.column;
+
+    // Cập nhật giao diện ngay lập tức (TC-US074-15)
+    setColumnsData((prev) => ({
+      ...prev,
+      [colId]: (prev[colId] || []).map((n) => (n.id === note.id ? { ...n, content: trimmed } : n)),
+    }));
+    setEditingNoteId(null);
+    setSavingEdit(true);
+
+    try {
+      const res = await updateRetroNote(activeSession.id, note.id, { content: trimmed });
+      setColumnsData((prev) => ({
+        ...prev,
+        [colId]: (prev[colId] || []).map((n) => (n.id === note.id ? { ...res.data, isMine: true } : n)),
+      }));
+      toast.success('Đã cập nhật ghi chú');
+    } catch (err) {
+      // Khôi phục khi lỗi
+      setColumnsData((prev) => ({
+        ...prev,
+        [colId]: (prev[colId] || []).map((n) => (n.id === note.id ? { ...n, content: oldContent } : n)),
+      }));
+      toast.error(err.response?.data?.error || 'Không thể cập nhật ghi chú');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  // Xóa ghi chú (SCRUM-74)
+  const handleDeleteNote = async (note) => {
+    if (!window.confirm('Bạn có chắc chắn muốn xóa ghi chú này?')) {
+      return;
+    }
+
+    const colId = note.column;
+    // Cập nhật giao diện ngay lập tức (TC-US074-16)
+    setColumnsData((prev) => ({
+      ...prev,
+      [colId]: (prev[colId] || []).filter((n) => n.id !== note.id),
+    }));
+
+    try {
+      await deleteRetroNote(activeSession.id, note.id);
+      toast.success('Đã xóa ghi chú');
+    } catch (err) {
+      // Khôi phục khi lỗi
+      setColumnsData((prev) => ({
+        ...prev,
+        [colId]: [...(prev[colId] || []), note],
+      }));
+      toast.error(err.response?.data?.error || 'Không thể xóa ghi chú');
     }
   };
 
@@ -416,8 +686,21 @@ export default function RetroPage() {
                             className={`w-full text-xs md:text-sm p-2.5 rounded-xl border border-outline-variant/20 bg-surface-container-lowest text-on-surface resize-none transition-all outline-none ${col.colorClasses.inputFocus}`}
                           />
                           <div className="flex items-center justify-between mt-1 text-[11px] text-on-surface-variant/70">
-                            <span>Nhấn Enter để gửi (Shift+Enter để xuống dòng)</span>
-                            <span>{inputValue?.length || 0}/500</span>
+                            <label className="flex items-center gap-1.5 cursor-pointer select-none text-on-surface hover:text-primary transition-colors">
+                              <input
+                                type="checkbox"
+                                checked={!!anonymousInputs[col.id]}
+                                onChange={(e) =>
+                                  setAnonymousInputs((prev) => ({ ...prev, [col.id]: e.target.checked }))
+                                }
+                                className="rounded border-outline-variant/30 text-primary focus:ring-primary w-3.5 h-3.5 cursor-pointer"
+                              />
+                              <span className="font-medium text-xs">Ẩn danh</span>
+                            </label>
+                            <div className="flex items-center gap-2">
+                              <span>Nhấn Enter để gửi</span>
+                              <span>{inputValue?.length || 0}/500</span>
+                            </div>
                           </div>
                         </div>
                       )}
@@ -438,41 +721,120 @@ export default function RetroPage() {
                           )}
                         </div>
                       ) : (
-                        notes.map((note) => (
-                          <div
-                            key={note.id}
-                            className={`p-3.5 rounded-xl border transition-all ${col.colorClasses.noteBg} ${col.colorClasses.accent}`}
-                          >
-                            <p className="text-xs md:text-sm font-['Inter'] whitespace-pre-wrap break-words leading-relaxed">
-                              {note.content}
-                            </p>
+                        notes.map((note) => {
+                          const isEditing = editingNoteId === note.id;
 
-                            <div className="mt-3 pt-2 border-t border-black/5 dark:border-white/5 flex items-center justify-between text-[11px] text-on-surface-variant opacity-80">
-                              <div className="flex items-center gap-1.5">
-                                {note.author?.avatar ? (
-                                  <img
-                                    src={getAvatarUrl(note.author.avatar)}
-                                    alt={note.author.fullName || 'User'}
-                                    className="w-4 h-4 rounded-full object-cover"
+                          return (
+                            <div
+                              key={note.id}
+                              className={`p-3.5 rounded-xl border transition-all ${col.colorClasses.noteBg} ${col.colorClasses.accent}`}
+                            >
+                              {isEditing ? (
+                                <div className="space-y-2">
+                                  <textarea
+                                    value={editingContent}
+                                    onChange={(e) => setEditingContent(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' && !e.shiftKey) {
+                                        e.preventDefault();
+                                        handleSaveEditNote(note);
+                                      } else if (e.key === 'Escape') {
+                                        cancelEditNote();
+                                      }
+                                    }}
+                                    rows={2}
+                                    maxLength={500}
+                                    autoFocus
+                                    className="w-full text-xs md:text-sm p-2 rounded-lg border border-outline-variant/30 bg-surface text-on-surface resize-none outline-none focus:ring-1 focus:ring-primary"
                                   />
-                                ) : (
-                                  <div className="w-4 h-4 rounded-full bg-primary/20 text-primary flex items-center justify-center text-[9px] font-bold">
-                                    {(note.author?.fullName || 'U').charAt(0).toUpperCase()}
+                                  <div className="flex items-center justify-between text-[11px] text-on-surface-variant">
+                                    <span>{editingContent.length}/500 (Enter để lưu, Esc để hủy)</span>
+                                    <div className="flex items-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={cancelEditNote}
+                                        className="px-2 py-0.5 text-xs rounded hover:bg-surface-container-high transition-colors text-on-surface-variant"
+                                      >
+                                        Hủy
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSaveEditNote(note)}
+                                        disabled={savingEdit || !editingContent.trim()}
+                                        className="px-2.5 py-0.5 text-xs rounded bg-primary text-on-primary font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+                                      >
+                                        {savingEdit ? 'Đang lưu...' : 'Lưu'}
+                                      </button>
+                                    </div>
                                   </div>
-                                )}
-                                <span className="font-medium truncate max-w-[120px]">
-                                  {note.author?.fullName || 'Thành viên'}
-                                </span>
+                                </div>
+                              ) : (
+                                <p className="text-xs md:text-sm font-['Inter'] whitespace-pre-wrap break-words leading-relaxed">
+                                  {note.content}
+                                </p>
+                              )}
+
+                              <div className="mt-3 pt-2 border-t border-black/5 dark:border-white/5 flex items-center justify-between text-[11px] text-on-surface-variant opacity-80">
+                                <div className="flex items-center gap-1.5">
+                                  {note.isAnonymous ? (
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-surface-container-high text-on-surface-variant font-medium text-[10px]">
+                                      <span className="material-symbols-outlined text-[13px]">visibility_off</span>
+                                      <span>Ẩn danh</span>
+                                    </span>
+                                  ) : (
+                                    <>
+                                      {note.author?.avatar ? (
+                                        <img
+                                          src={getAvatarUrl(note.author.avatar)}
+                                          alt={note.author.name || note.author.fullName || 'User'}
+                                          className="w-4 h-4 rounded-full object-cover"
+                                        />
+                                      ) : (
+                                        <div className="w-4 h-4 rounded-full bg-primary/20 text-primary flex items-center justify-center text-[9px] font-bold">
+                                          {(note.author?.name || note.author?.fullName || 'U').charAt(0).toUpperCase()}
+                                        </div>
+                                      )}
+                                      <span className="font-medium truncate max-w-[120px]">
+                                        {note.author?.name || note.author?.fullName || 'Thành viên'}
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[10px] shrink-0">
+                                    {new Date(note.createdAt).toLocaleTimeString('vi-VN', {
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                    })}
+                                  </span>
+
+                                  {/* Nút Sửa/Xóa chỉ hiện khi isMine */}
+                                  {note.isMine && activeSession.status === 'OPEN' && !isEditing && (
+                                    <div className="flex items-center gap-1 ml-1 border-l pl-1.5 border-outline-variant/20">
+                                      <button
+                                        type="button"
+                                        onClick={() => startEditNote(note)}
+                                        title="Sửa ghi chú"
+                                        className="p-1 rounded hover:bg-black/10 dark:hover:bg-white/10 text-on-surface-variant transition-colors"
+                                      >
+                                        <span className="material-symbols-outlined text-[14px]">edit</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteNote(note)}
+                                        title="Xóa ghi chú"
+                                        className="p-1 rounded hover:bg-red-500/10 text-red-500 transition-colors"
+                                      >
+                                        <span className="material-symbols-outlined text-[14px]">delete</span>
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
                               </div>
-                              <span className="text-[10px] shrink-0">
-                                {new Date(note.createdAt).toLocaleTimeString('vi-VN', {
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                })}
-                              </span>
                             </div>
-                          </div>
-                        ))
+                          );
+                        })
                       )}
                     </div>
                   </div>

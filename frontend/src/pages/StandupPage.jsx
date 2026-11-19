@@ -4,11 +4,13 @@ import MainLayout from '../components/MainLayout';
 import { useSidebar } from '../context/SidebarContext';
 import StandupHistory from '../components/StandupHistory';
 import QuickDailyStandupForm from '../components/QuickDailyStandupForm';
+import OpenBlockersPanel from '../components/OpenBlockersPanel';
 import { 
     getSprintDailyStandups, 
     checkSprintTodayStandup, 
     getProjectStandups, 
-    checkTodayStandup 
+    checkTodayStandup,
+    getSprintBlockers
 } from '../services/standupService';
 import api from '../services/api';
 
@@ -21,11 +23,13 @@ export default function StandupPage() {
     const [selectedSprint, setSelectedSprint] = useState(null);
     const [todayStandup, setTodayStandup] = useState(null);
     const [userRole, setUserRole] = useState('MEMBER');
-    const [activeTab, setActiveTab] = useState('submit'); // 'submit' or 'history'
+    const [activeTab, setActiveTab] = useState('submit'); // 'submit' | 'history' | 'blockers'
     const [alreadySubmitted, setAlreadySubmitted] = useState(false);
+    const [openBlockerCount, setOpenBlockerCount] = useState(0);
     const [loading, setLoading] = useState(true);
     const [filterMemberId, setFilterMemberId] = useState('ALL');
     const [filterDate, setFilterDate] = useState('');
+    const [filterBlockedOnly, setFilterBlockedOnly] = useState(false);
     const { toggle } = useSidebar();
 
     useEffect(() => {
@@ -54,15 +58,17 @@ export default function StandupPage() {
             setSelectedSprint(activeSprint);
 
             if (activeSprint) {
-                // Tải dữ liệu Daily theo Sprint
-                const [statusRes, dailyRes] = await Promise.all([
+                // Tải dữ liệu Daily theo Sprint & số Blocker đang mở
+                const [statusRes, dailyRes, blockersRes] = await Promise.all([
                     checkSprintTodayStandup(activeSprint.id).catch(() => ({ submitted: false, standup: null })),
-                    getSprintDailyStandups(activeSprint.id).catch(() => ({ standups: [] }))
+                    getSprintDailyStandups(activeSprint.id).catch(() => ({ standups: [] })),
+                    getSprintBlockers(activeSprint.id, 'OPEN').catch(() => ({ blockers: [] }))
                 ]);
 
                 setAlreadySubmitted(Boolean(statusRes.submitted));
                 setTodayStandup(statusRes.standup || null);
                 setStandups(dailyRes.standups || []);
+                setOpenBlockerCount(blockersRes.blockers?.length || 0);
 
                 if ((roleRes.data?.role === 'SM' || roleRes.data?.role === 'PO') && statusRes.submitted) {
                     setActiveTab('history');
@@ -90,8 +96,12 @@ export default function StandupPage() {
         setSelectedSprint(found);
         if (found) {
             try {
-                const res = await getSprintDailyStandups(found.id);
-                setStandups(res.standups || []);
+                const [dailyRes, blockersRes] = await Promise.all([
+                    getSprintDailyStandups(found.id).catch(() => ({ standups: [] })),
+                    getSprintBlockers(found.id, 'OPEN').catch(() => ({ blockers: [] }))
+                ]);
+                setStandups(dailyRes.standups || []);
+                setOpenBlockerCount(blockersRes.blockers?.length || 0);
             } catch (err) {
                 console.error("Lỗi tải lịch sử sprint:", err);
             }
@@ -103,13 +113,35 @@ export default function StandupPage() {
         setTodayStandup(createdStandup);
         setAlreadySubmitted(true);
 
-        // Cập nhật lại danh sách lịch sử
-        if (selectedSprint) {
+        // Cập nhật lại danh sách lịch sử & đếm Blocker
+        const targetSprintId = selectedSprint?.id || activeSprint?.id;
+        if (targetSprintId) {
             try {
-                const res = await getSprintDailyStandups(selectedSprint.id);
+                const [res, blockersRes] = await Promise.all([
+                    getSprintDailyStandups(targetSprintId).catch(() => ({ standups: [] })),
+                    getSprintBlockers(targetSprintId, 'OPEN').catch(() => ({ blockers: [] }))
+                ]);
                 setStandups(res.standups || []);
+                setOpenBlockerCount(blockersRes.blockers?.length || 0);
             } catch (err) {
                 console.error("Lỗi cập nhật lịch sử sau khi submit:", err);
+            }
+        }
+    };
+
+    // Callback khi SM/PO giải quyết Blocker từ OpenBlockersPanel
+    const handleBlockerResolved = async () => {
+        const targetSprintId = selectedSprint?.id || activeSprint?.id;
+        if (targetSprintId) {
+            try {
+                const [res, blockersRes] = await Promise.all([
+                    getSprintDailyStandups(targetSprintId).catch(() => ({ standups: [] })),
+                    getSprintBlockers(targetSprintId, 'OPEN').catch(() => ({ blockers: [] }))
+                ]);
+                setStandups(res.standups || []);
+                setOpenBlockerCount(blockersRes.blockers?.length || 0);
+            } catch (err) {
+                console.error("Lỗi cập nhật sau khi giải quyết blocker:", err);
             }
         }
     };
@@ -169,6 +201,25 @@ export default function StandupPage() {
                                 {standups.length}
                             </span>
                         </button>
+
+                        <button 
+                            onClick={() => setActiveTab('blockers')}
+                            className={`flex items-center gap-2 px-4 md:px-8 py-2.5 md:py-3 rounded-[16px] md:rounded-[20px] font-bold text-xs md:text-sm transition-all duration-300 whitespace-nowrap ${activeTab === 'blockers' ? 'bg-red-600 text-white shadow-lg shadow-red-500/25' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
+                        >
+                            <span className="material-symbols-outlined text-lg">crisis_alert</span>
+                            Ai đang kẹt
+                            {openBlockerCount > 0 ? (
+                                <span className={`ml-1 px-2 py-0.5 rounded-full text-[10px] font-black ${
+                                    activeTab === 'blockers' ? 'bg-white text-red-600' : 'bg-red-600 text-white animate-pulse'
+                                }`}>
+                                    {openBlockerCount}
+                                </span>
+                            ) : (
+                                <span className="ml-1 px-2 py-0.5 rounded-full text-[10px] font-medium opacity-60">
+                                    0
+                                </span>
+                            )}
+                        </button>
                     </div>
                 </div>
 
@@ -182,6 +233,16 @@ export default function StandupPage() {
                                 sprintStatus={activeSprint?.status || selectedSprint?.status || 'PLANNED'}
                                 existingStandup={todayStandup}
                                 onSuccess={handleDailySubmittedSuccess}
+                            />
+                        </div>
+                    ) : activeTab === 'blockers' ? (
+                        <div className="max-w-4xl mx-auto">
+                            {/* Component Danh sách Blocker đang mở & Gỡ Blocker */}
+                            <OpenBlockersPanel 
+                                sprintId={selectedSprint?.id || activeSprint?.id}
+                                sprintName={selectedSprint?.name || activeSprint?.name}
+                                userRole={userRole}
+                                onBlockerResolved={handleBlockerResolved}
                             />
                         </div>
                     ) : (
@@ -247,6 +308,30 @@ export default function StandupPage() {
                                             </button>
                                         )}
                                     </div>
+
+                                    {/* NÚT LỌC NHANH: CHỈ XEM NGƯỜI ĐANG KẸT (Tùy chọn nâng cao) */}
+                                    <button
+                                        type="button"
+                                        onClick={() => setFilterBlockedOnly(!filterBlockedOnly)}
+                                        className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+                                            filterBlockedOnly 
+                                                ? 'bg-red-600 text-white border-red-600 shadow-sm shadow-red-500/20' 
+                                                : 'bg-surface-container-high border-outline-variant/10 text-on-surface-variant hover:bg-surface-container-highest'
+                                        }`}
+                                        title="Chỉ hiển thị các thành viên bật cờ Đang kẹt (cần hỗ trợ)"
+                                    >
+                                        <span className="material-symbols-outlined text-sm">
+                                            {filterBlockedOnly ? 'report' : 'support_agent'}
+                                        </span>
+                                        <span>Chỉ người đang kẹt</span>
+                                        {standups.filter(s => s.blocked).length > 0 && (
+                                            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                                                filterBlockedOnly ? 'bg-white text-red-600' : 'bg-red-500/20 text-red-600'
+                                            }`}>
+                                                {standups.filter(s => s.blocked).length}
+                                            </span>
+                                        )}
+                                    </button>
                                 </div>
                             </div>
                             
@@ -255,7 +340,8 @@ export default function StandupPage() {
                                     const matchMember = filterMemberId === 'ALL' || log.userId === filterMemberId;
                                     const rawDate = log.reportDate || log.date || log.createdAt || '';
                                     const matchDate = !filterDate || String(rawDate).startsWith(filterDate);
-                                    return matchMember && matchDate;
+                                    const matchBlocked = !filterBlockedOnly || Boolean(log.blocked);
+                                    return matchMember && matchDate && matchBlocked;
                                 })} 
                                 members={members} 
                             />

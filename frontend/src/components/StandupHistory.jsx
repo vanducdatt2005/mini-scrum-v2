@@ -91,8 +91,14 @@ export default function StandupHistory({ standups, members }) {
                                         <div className="absolute left-3 top-0 bottom-0 w-0.5 bg-outline-variant/10 group-last/item:bottom-auto group-last/item:h-8" />
                                         <div className="absolute left-[7px] top-8 w-2.5 h-2.5 rounded-full bg-primary border-4 border-surface shadow-sm" />
 
-                                        <div className="bg-surface-container-low/30 rounded-[20px] md:rounded-3xl p-4 md:p-6 border border-outline-variant/5 group-hover/item:border-primary/20 transition-all">
-                                            <div className="flex items-center justify-between mb-4">
+                                        <div className={`rounded-[20px] md:rounded-3xl p-4 md:p-6 transition-all ${
+                                            log.blocked 
+                                                ? (log.blockerStatus === 'CLOSED'
+                                                    ? 'bg-emerald-500/5 border border-emerald-500/30'
+                                                    : 'bg-red-500/5 border-2 border-red-500/40 shadow-sm shadow-red-500/10')
+                                                : 'bg-surface-container-low/30 border border-outline-variant/5 group-hover/item:border-primary/20'
+                                        }`}>
+                                            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
                                                 <div className="flex items-center gap-3">
                                                     <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-primary-container flex items-center justify-center text-on-primary font-bold text-xs ring-4 ring-surface shrink-0">
                                                         {log.user.fullName?.[0] || log.user.email[0].toUpperCase()}
@@ -102,7 +108,58 @@ export default function StandupHistory({ standups, members }) {
                                                         <p className="text-[10px] text-on-surface-variant font-medium opacity-60">Lúc {formatDate(log.createdAt || log.date || log.reportDate)}</p>
                                                     </div>
                                                 </div>
+
+                                                {/* BADGE CẢNH BÁO ĐANG KẸT HOẶC ĐÃ GỠ (DoD UI) */}
+                                                {log.blocked && (
+                                                    log.blockerStatus === 'CLOSED' ? (
+                                                        <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 text-white rounded-full text-[11px] font-black uppercase tracking-wider shadow-sm shadow-emerald-500/20">
+                                                            <span className="material-symbols-outlined text-xs">check_circle</span>
+                                                            <span>ĐÃ GỠ BLOCKER</span>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex items-center gap-1.5 px-3 py-1 bg-red-600 text-white rounded-full text-[11px] font-black uppercase tracking-wider shadow-sm shadow-red-500/20 animate-pulse">
+                                                            <span className="material-symbols-outlined text-xs">report</span>
+                                                            <span>ĐANG KẸT</span>
+                                                        </div>
+                                                    )
+                                                )}
                                             </div>
+
+                                            {/* HIỂN THỊ NỘI DUNG BLOCKER NOTE VÀ THÔNG TIN ĐÃ GỠ NẾU CÓ */}
+                                            {log.blocked && (
+                                                <div className={`mb-4 p-3.5 rounded-2xl flex items-start gap-2.5 ${
+                                                    log.blockerStatus === 'CLOSED'
+                                                        ? 'bg-emerald-500/10 border border-emerald-500/25'
+                                                        : 'bg-red-500/10 border border-red-500/25'
+                                                }`}>
+                                                    <span className={`material-symbols-outlined text-lg mt-0.5 shrink-0 ${
+                                                        log.blockerStatus === 'CLOSED' ? 'text-emerald-600' : 'text-red-600'
+                                                    }`}>
+                                                        {log.blockerStatus === 'CLOSED' ? 'task_alt' : 'emergency'}
+                                                    </span>
+                                                    <div className="flex-1">
+                                                        <div className="flex items-center justify-between flex-wrap gap-2">
+                                                            <span className={`text-[11px] font-black uppercase tracking-wider ${
+                                                                log.blockerStatus === 'CLOSED' ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'
+                                                            }`}>
+                                                                {log.blockerStatus === 'CLOSED' ? 'Lý do kẹt (Đã được tháo gỡ):' : 'Lý do đang kẹt (Cần hỗ trợ gấp):'}
+                                                            </span>
+                                                            {log.blockerStatus === 'CLOSED' && (
+                                                                <span className="text-[11px] text-emerald-800 dark:text-emerald-300 font-semibold flex items-center gap-1">
+                                                                    <span className="material-symbols-outlined text-xs">verified</span>
+                                                                    Đã gỡ bởi {log.resolver?.fullName || log.resolver?.email || 'Scrum Master / PO'}
+                                                                    {log.blockerResolvedAt && ` • ${formatDate(log.blockerResolvedAt)}`}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <p className={`text-sm font-bold mt-0.5 leading-relaxed ${
+                                                            log.blockerStatus === 'CLOSED' ? 'text-emerald-950 dark:text-emerald-100' : 'text-red-900 dark:text-red-100'
+                                                        }`}>
+                                                            {log.blockerNote || '(Chưa ghi chi tiết lý do)'}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            )}
 
                                             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-4">
                                                 <div className="space-y-1">

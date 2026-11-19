@@ -19,6 +19,7 @@ model User {
   assignedStories UserStory[]          @relation("AssignedStories")
   assignedTasks   Task[]               @relation("AssignedTasks")
   standups        DailyStandup[]
+  resolvedBlockers DailyStandup[]       @relation("ResolvedBlockers")
   comments        Comment[]
   attachments     Attachment[]
   notificationsReceived Notification[] @relation("ReceivedNotifications")
@@ -139,6 +140,16 @@ model DailyStandup {
   todayPlan     String   @map("today_plan")
   blockers      String   @map("blockers")
 
+  // Tính năng Bật cờ "Đang kẹt" (Blocked) & lý do ngắn
+  blocked           Boolean   @default(false) @map("blocked")
+  blockerNote       String?   @map("blocker_note") @db.VarChar(255)
+
+  // Quản lý trạng thái xử lý Blocker ("Ai đang kẹt" & "Đã gỡ")
+  blockerStatus     String?   @default("OPEN") @map("blocker_status") // 'OPEN' | 'CLOSED'
+  blockerResolvedAt DateTime? @map("blocker_resolved_at")
+  blockerResolvedBy String?   @map("blocker_resolved_by")
+  resolver          User?     @relation("ResolvedBlockers", fields: [blockerResolvedBy], references: [id], onDelete: SetNull)
+
   // Tương thích ngược
   yesterday     String?  @map("yesterday")
   today         String?  @map("today")
@@ -154,6 +165,7 @@ model DailyStandup {
 
   @@unique([userId, sprintId, reportDate], name: "userId_sprintId_reportDate")
   @@index([sprintId, reportDate])
+  @@index([sprintId, blocked, blockerStatus])
   @@index([projectId, date])
   @@map("daily_standups")
 }

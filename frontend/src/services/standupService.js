@@ -39,6 +39,35 @@ export const checkSprintTodayStandup = async (sprintId) => {
     return response.data;
 };
 
+/**
+ * Lấy danh sách Blocker trong Sprint ("Ai đang kẹt" - AC1)
+ * GET /api/sprints/:sprintId/blockers?status=OPEN|CLOSED|ALL
+ */
+export const getSprintBlockers = async (sprintId, status = 'OPEN') => {
+    const response = await api.get(`/sprints/${sprintId}/blockers`, {
+        params: status ? { status } : {}
+    });
+    return response.data;
+};
+
+/**
+ * Gỡ / Đóng Blocker dành cho SM/PO (AC2 & DoD)
+ * PATCH /api/sprints/:sprintId/blockers/:dailyId/resolve
+ */
+export const resolveSprintBlocker = async (sprintId, dailyId) => {
+    const response = await api.patch(`/sprints/${sprintId}/blockers/${dailyId}/resolve`);
+    return response.data;
+};
+
+/**
+ * Lấy chi tiết 1 bản ghi Daily Standup gốc
+ * GET /api/sprints/daily-standups/:dailyId
+ */
+export const getDailyStandupDetail = async (dailyId) => {
+    const response = await api.get(`/sprints/daily-standups/${dailyId}`);
+    return response.data;
+};
+
 // ==========================================
 // TƯƠNG THÍCH VỚI DỰ ÁN (PROJECT-LEVEL FALLBACK)
 // ==========================================

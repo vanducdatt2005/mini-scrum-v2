@@ -9,7 +9,8 @@ import {
  * QuickDailyStandupForm
  * Tối ưu thao tác điền báo cáo Daily dưới 2 phút & Chỉnh sửa Daily trong cùng ngày:
  * - 3 trường: yesterday_work, today_plan, blockers
- * - Auto-focus ô đầu tiên
+ * - Cờ "Đang kẹt (Cần hỗ trợ)" (blocked) & lý do ngắn (blockerNote)
+ * - Auto-focus ô đầu tiên & auto-focus khi mở rộng cờ kẹt
  * - Quick chip "Không có vướng mắc" (1 chạm)
  * - Phím tắt Ctrl + Enter / Cmd + Enter gửi nhanh
  * - Validation viền đỏ chi tiết từng ô
@@ -30,6 +31,8 @@ export default function QuickDailyStandupForm({
     const [yesterdayWork, setYesterdayWork] = useState('');
     const [todayPlan, setTodayPlan] = useState('');
     const [blockers, setBlockers] = useState('');
+    const [blocked, setBlocked] = useState(false);
+    const [blockerNote, setBlockerNote] = useState('');
 
     // Form states
     const [errors, setErrors] = useState({});
@@ -40,8 +43,9 @@ export default function QuickDailyStandupForm({
     const [loadingToday, setLoadingToday] = useState(false);
     const [toast, setToast] = useState(null); // { type: 'success' | 'error', message }
 
-    // Ref for auto-focusing the first textarea
+    // Refs
     const yesterdayInputRef = useRef(null);
+    const blockerNoteInputRef = useRef(null);
 
     // Auto-hide toast notification sau 3.5s
     useEffect(() => {
@@ -68,6 +72,8 @@ export default function QuickDailyStandupForm({
                     setYesterdayWork(record.yesterdayWork || record.yesterday || '');
                     setTodayPlan(record.todayPlan || record.today || '');
                     setBlockers(record.blockers || '');
+                    setBlocked(Boolean(record.blocked));
+                    setBlockerNote(record.blockerNote || '');
                     setIsEditing(false);
                 } else {
                     // Chưa gửi hôm nay hoặc đã sang ngày mới (AC2)
@@ -75,6 +81,8 @@ export default function QuickDailyStandupForm({
                     setYesterdayWork('');
                     setTodayPlan('');
                     setBlockers('');
+                    setBlocked(false);
+                    setBlockerNote('');
                     setIsEditing(true);
                 }
             })
@@ -85,6 +93,8 @@ export default function QuickDailyStandupForm({
                     setYesterdayWork(existingStandup.yesterdayWork || existingStandup.yesterday || '');
                     setTodayPlan(existingStandup.todayPlan || existingStandup.today || '');
                     setBlockers(existingStandup.blockers || '');
+                    setBlocked(Boolean(existingStandup.blocked));
+                    setBlockerNote(existingStandup.blockerNote || '');
                 }
             })
             .finally(() => {
@@ -103,6 +113,8 @@ export default function QuickDailyStandupForm({
             setYesterdayWork(existingStandup.yesterdayWork || existingStandup.yesterday || '');
             setTodayPlan(existingStandup.todayPlan || existingStandup.today || '');
             setBlockers(existingStandup.blockers || '');
+            setBlocked(Boolean(existingStandup.blocked));
+            setBlockerNote(existingStandup.blockerNote || '');
         }
     }, [existingStandup]);
 
@@ -116,7 +128,7 @@ export default function QuickDailyStandupForm({
         }
     }, [submittedStandup, isEditing, sprintStatus]);
 
-    // Client-side Validation (AC2)
+    // Client-side Validation (AC2 & Conditional Validation)
     const validate = () => {
         const newErrors = {};
         if (!yesterdayWork.trim()) {
@@ -128,6 +140,11 @@ export default function QuickDailyStandupForm({
         if (!blockers.trim()) {
             newErrors.blockers = "Vui lòng nhập khó khăn/vướng mắc hoặc bấm 'Không có vướng mắc'";
         }
+        // Bắt buộc nhập blockerNote khi bật cờ blocked = true (AC2)
+        if (blocked && !blockerNote.trim()) {
+            newErrors.blocker_note = 'Vui lòng nhập lý do ngắn khi bật trạng thái Đang kẹt';
+        }
+
         setErrors(newErrors);
         return Object.keys(newErrors).length === 0;
     };
@@ -144,12 +161,35 @@ export default function QuickDailyStandupForm({
         }
     };
 
+    // Toggle switch Bật cờ "Đang kẹt"
+    const handleToggleBlocked = () => {
+        const nextState = !blocked;
+        setBlocked(nextState);
+        if (!nextState) {
+            setBlockerNote('');
+            if (errors.blocker_note) {
+                setErrors(prev => {
+                    const next = { ...prev };
+                    delete next.blocker_note;
+                    return next;
+                });
+            }
+        } else {
+            // Tự động focus vào ô nhập lý do khi mở rộng
+            setTimeout(() => {
+                blockerNoteInputRef.current?.focus();
+            }, 150);
+        }
+    };
+
     // Mở chế độ chỉnh sửa Daily trong cùng ngày
     const handleStartEdit = () => {
         if (submittedStandup) {
             setYesterdayWork(submittedStandup.yesterdayWork || submittedStandup.yesterday || '');
             setTodayPlan(submittedStandup.todayPlan || submittedStandup.today || '');
             setBlockers(submittedStandup.blockers || '');
+            setBlocked(Boolean(submittedStandup.blocked));
+            setBlockerNote(submittedStandup.blockerNote || '');
         }
         setErrors({});
         setApiError(null);
@@ -162,6 +202,8 @@ export default function QuickDailyStandupForm({
             setYesterdayWork(submittedStandup.yesterdayWork || submittedStandup.yesterday || '');
             setTodayPlan(submittedStandup.todayPlan || submittedStandup.today || '');
             setBlockers(submittedStandup.blockers || '');
+            setBlocked(Boolean(submittedStandup.blocked));
+            setBlockerNote(submittedStandup.blockerNote || '');
         }
         setErrors({});
         setApiError(null);
@@ -193,7 +235,9 @@ export default function QuickDailyStandupForm({
             const payload = {
                 yesterday_work: yesterdayWork.trim(),
                 today_plan: todayPlan.trim(),
-                blockers: blockers.trim()
+                blockers: blockers.trim(),
+                blocked: Boolean(blocked),
+                blocker_note: blocked ? blockerNote.trim() : null
             };
 
             let result;
@@ -321,6 +365,7 @@ export default function QuickDailyStandupForm({
         const displayBlockers = submittedStandup.blockers || '';
         const hasBlockers = displayBlockers && !displayBlockers.toLowerCase().includes('không');
         const hasEdited = checkIsEdited(submittedStandup.createdAt, submittedStandup.updatedAt);
+        const isCurrentlyBlocked = Boolean(submittedStandup.blocked);
 
         return (
             <div className={`bg-surface-container rounded-[28px] md:rounded-[36px] p-6 md:p-8 border border-outline-variant/15 shadow-lg relative overflow-hidden ${className}`}>
@@ -339,24 +384,43 @@ export default function QuickDailyStandupForm({
                 <div className="absolute top-0 right-0 w-48 h-48 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
 
                 {/* Banner Thông báo trạng thái Đã gửi hôm nay */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 md:p-5 bg-emerald-500/10 border border-emerald-500/25 rounded-2xl md:rounded-3xl mb-6">
+                <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 md:p-5 rounded-2xl md:rounded-3xl mb-6 border transition-all ${
+                    isCurrentlyBlocked 
+                        ? 'bg-red-500/10 border-red-500/25' 
+                        : 'bg-emerald-500/10 border-emerald-500/25'
+                }`}>
                     <div className="flex items-center gap-3 md:gap-4">
-                        <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-emerald-500/20">
-                            <span className="material-symbols-outlined text-2xl font-bold">check_circle</span>
+                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-md ${
+                            isCurrentlyBlocked 
+                                ? 'bg-red-600 text-white shadow-red-500/20' 
+                                : 'bg-emerald-600 text-white shadow-emerald-500/20'
+                        }`}>
+                            <span className="material-symbols-outlined text-2xl font-bold">
+                                {isCurrentlyBlocked ? 'report' : 'check_circle'}
+                            </span>
                         </div>
                         <div>
                             <div className="flex items-center gap-2 flex-wrap">
-                                <h3 className="text-base md:text-lg font-black text-emerald-950 dark:text-emerald-300">
+                                <h3 className={`text-base md:text-lg font-black ${
+                                    isCurrentlyBlocked ? 'text-red-950 dark:text-red-300' : 'text-emerald-950 dark:text-emerald-300'
+                                }`}>
                                     Đã gửi hôm nay
                                 </h3>
-                                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-800 dark:text-emerald-200 text-[10px] font-black uppercase tracking-wider">
-                                    Same-Day Verified
-                                </span>
+                                {isCurrentlyBlocked ? (
+                                    <span className="px-2.5 py-0.5 rounded-full bg-red-500 text-white text-[10px] font-black uppercase tracking-wider animate-pulse flex items-center gap-1">
+                                        <span className="material-symbols-outlined text-xs">emergency</span>
+                                        ĐANG KẸT
+                                    </span>
+                                ) : (
+                                    <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-800 dark:text-emerald-200 text-[10px] font-black uppercase tracking-wider">
+                                        Same-Day Verified
+                                    </span>
+                                )}
                             </div>
-                            <p className="text-xs text-emerald-900/70 dark:text-emerald-300/70 font-medium mt-0.5">
+                            <p className="text-xs text-on-surface-variant/80 font-medium mt-0.5">
                                 Gửi lúc {formatTime(submittedStandup.createdAt || submittedStandup.date || submittedStandup.reportDate)}
                                 {hasEdited && (
-                                    <span className="ml-2 inline-flex items-center gap-1 font-bold text-emerald-700 dark:text-emerald-300">
+                                    <span className="ml-2 inline-flex items-center gap-1 font-bold text-primary">
                                         • (Đã chỉnh sửa lúc {formatHourMinute(submittedStandup.updatedAt)})
                                     </span>
                                 )}
@@ -374,6 +438,19 @@ export default function QuickDailyStandupForm({
                         <span>Chỉnh sửa</span>
                     </button>
                 </div>
+
+                {/* KHỐI CẢNH BÁO ĐỎ KHI ĐANG KẸT (AC1, DoD UI) */}
+                {isCurrentlyBlocked && (
+                    <div className="mb-6 p-4 md:p-5 rounded-2xl bg-red-500/15 border-2 border-red-500/40 text-red-950 dark:text-red-100 animate-in fade-in duration-300">
+                        <div className="flex items-center gap-2 font-black text-xs uppercase tracking-wider text-red-700 dark:text-red-400 mb-1.5">
+                            <span className="material-symbols-outlined text-base">warning</span>
+                            <span>🚨 CẢNH BÁO: BẠN ĐANG GẶP TRỞ NGẠI (CẦN HỖ TRỢ)</span>
+                        </div>
+                        <p className="text-sm font-bold text-red-900 dark:text-red-100 pl-6 leading-relaxed">
+                            {submittedStandup.blockerNote || '(Chưa ghi chi tiết lý do)'}
+                        </p>
+                    </div>
+                )}
 
                 {/* Nội dung báo cáo đã gửi (Read-only) */}
                 <div className="space-y-4">
@@ -437,7 +514,7 @@ export default function QuickDailyStandupForm({
     }
 
     // ========================================================
-    // FORM NHẬP LIỆU / CHỈNH SỬA CHÍNH (3 FIELDS)
+    // FORM NHẬP LIỆU / CHỈNH SỬA CHÍNH (3 FIELDS + BLOCK TOGGLE)
     // ========================================================
     return (
         <div className={`bg-surface-container rounded-[28px] md:rounded-[36px] p-6 md:p-8 border border-outline-variant/15 shadow-xl shadow-surface-variant/5 relative overflow-hidden ${className}`}>
@@ -624,6 +701,104 @@ export default function QuickDailyStandupForm({
                             <span className="material-symbols-outlined text-sm">info</span>
                             {errors.blockers}
                         </p>
+                    )}
+                </div>
+
+                {/* ======================================================== */}
+                {/* PHẦN 4: NÚT GẠT CỜ "ĐANG KẸT" (BLOCKED) & LÝ DO NGẮN (AC1, AC2) */}
+                {/* ======================================================== */}
+                <div className={`p-4 md:p-5 rounded-2xl border transition-all duration-300 ${
+                    blocked 
+                        ? 'bg-red-500/10 border-red-500/30 shadow-sm shadow-red-500/10' 
+                        : 'bg-surface-container-low/60 border-outline-variant/15 hover:border-outline-variant/30'
+                }`}>
+                    <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${
+                                blocked ? 'bg-red-600 text-white shadow-md shadow-red-500/20' : 'bg-surface-container-highest text-on-surface-variant'
+                            }`}>
+                                <span className="material-symbols-outlined text-lg">
+                                    {blocked ? 'report' : 'support_agent'}
+                                </span>
+                            </div>
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-sm font-black text-on-surface">Đang kẹt (Cần hỗ trợ)</span>
+                                    {blocked && (
+                                        <span className="px-2 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-black uppercase tracking-wider animate-pulse flex items-center gap-0.5">
+                                            <span className="material-symbols-outlined text-xs">emergency</span>
+                                            Cần trợ giúp
+                                        </span>
+                                    )}
+                                </div>
+                                <p className="text-xs text-on-surface-variant/70 font-medium">
+                                    Bật cờ để Scrum Master nhận diện ngay và ưu tiên hỗ trợ bạn
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Toggle Switch */}
+                        <button
+                            type="button"
+                            role="switch"
+                            aria-checked={blocked}
+                            onClick={handleToggleBlocked}
+                            className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                                blocked ? 'bg-red-600' : 'bg-surface-container-highest'
+                            }`}
+                        >
+                            <span
+                                className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                    blocked ? 'translate-x-5' : 'translate-x-0'
+                                }`}
+                            />
+                        </button>
+                    </div>
+
+                    {/* KHUNG NHẬP LÝ DO ĐANG KẸT (TỰ ĐỘNG EXPAND KHI BLOCKED = TRUE) */}
+                    {blocked && (
+                        <div className="mt-4 pt-4 border-t border-red-500/20 animate-in fade-in slide-in-from-top-2 duration-300">
+                            <div className="flex items-center justify-between mb-2">
+                                <label 
+                                    htmlFor="blocker_note"
+                                    className="text-xs font-black text-red-700 dark:text-red-400 uppercase tracking-wider flex items-center gap-1.5"
+                                >
+                                    <span className="material-symbols-outlined text-sm">warning</span>
+                                    Lý do đang kẹt (Ngắn gọn) <span className="text-error font-bold">*</span>
+                                </label>
+                                <span className={`text-[11px] font-mono font-bold ${
+                                    blockerNote.length > 200 ? 'text-error font-black' : 'text-on-surface-variant/60'
+                                }`}>
+                                    {blockerNote.length}/200
+                                </span>
+                            </div>
+                            <textarea
+                                ref={blockerNoteInputRef}
+                                id="blocker_note"
+                                rows={2}
+                                maxLength={255}
+                                value={blockerNote}
+                                onChange={(e) => {
+                                    setBlockerNote(e.target.value);
+                                    if (errors.blocker_note) {
+                                        setErrors(prev => ({ ...prev, blocker_note: null }));
+                                    }
+                                }}
+                                onKeyDown={handleKeyDown}
+                                placeholder="Ví dụ: Chờ API xác thực từ team Backend, vướng quyền truy cập DB production..."
+                                className={`w-full bg-surface-container-lowest border rounded-2xl p-3.5 text-sm font-medium transition-all outline-none resize-none placeholder:text-on-surface-variant/40 placeholder:font-normal ${
+                                    errors.blocker_note
+                                        ? 'border-error ring-2 ring-error/20 bg-error-container/5'
+                                        : 'border-red-500/30 focus:border-red-500 focus:ring-4 focus:ring-red-500/10'
+                                }`}
+                            />
+                            {errors.blocker_note && (
+                                <p className="mt-1.5 ml-1 text-xs text-error font-semibold flex items-center gap-1 animate-in fade-in">
+                                    <span className="material-symbols-outlined text-sm">info</span>
+                                    {errors.blocker_note}
+                                </p>
+                            )}
+                        </div>
                     )}
                 </div>
 

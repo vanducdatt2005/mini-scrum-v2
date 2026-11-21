@@ -2040,6 +2040,12 @@ app.post(["/api/poker-room/:id/finalize", "/api/poker-room/:id/save-estimate"], 
           pokerSessionID: room.id,
           storyPoints: points
         });
+        io.to(projectChannel).emit("userStory:changed", {
+          action: "update",
+          data: updatedStory,
+          projectId: room.projectId,
+          eventId: `evt_story_${Date.now()}`
+        });
         io.to(projectChannel).emit("pokerRoomClosed", {
           roomId: room.id,
           storyId: room.storyId,

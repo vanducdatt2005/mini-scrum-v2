@@ -22,15 +22,38 @@ const authMiddleware = (req, res, next) => {
 
 const getUserId = (req) => req.user?.userId || req.user?.id;
 
+// Hằng số cấu hình giới hạn số phiếu bầu / người / buổi (SCRUM-75)
+const MAX_VOTES = 3;
+
 /**
- * Hàm serialize note dùng chung cho API và socket (SCRUM-74)
- * Trả {id, sessionId, column, content, createdAt, isAnonymous, isMine?, author?}
+ * Hàm serialize note dùng chung cho API và socket (SCRUM-74 & SCRUM-75)
+ * Trả {id, sessionId, column, content, createdAt, isAnonymous, voteCount, myVoted, isMine?, author?}
  * - isAnonymous = true: KHÔNG có author/authorId/tên/email trong payload với BẤT KỲ ai, kể cả Scrum Master/Admin.
  * - isAnonymous = false: trả author {id, name}.
  * - isMine tính theo người gọi API (khi có currentUserId). Socket broadcast không chứa isMine/authorId.
+ * - voteCount: tổng số lượt vote của note.
+ * - myVoted: boolean (người gọi đã vote note này chưa).
+ * - Tuyệt đối không trả danh sách người vote để bảo mật tính ẩn danh.
  */
 function serializeRetroNote(note, currentUserId = null) {
   const isAnonymous = Boolean(note.isAnonymous);
+
+  let voteCount = 0;
+  if (typeof note.voteCount === 'number') {
+    voteCount = note.voteCount;
+  } else if (note._count && typeof note._count.votes === 'number') {
+    voteCount = note._count.votes;
+  } else if (Array.isArray(note.votes)) {
+    voteCount = note.votes.length;
+  }
+
+  let myVoted = false;
+  if (currentUserId && Array.isArray(note.votes)) {
+    myVoted = note.votes.some((v) => v.userId === currentUserId);
+  } else if (currentUserId && typeof note.myVoted === 'boolean') {
+    myVoted = note.myVoted;
+  }
+
   const result = {
     id: note.id,
     sessionId: note.sessionId,
@@ -38,6 +61,8 @@ function serializeRetroNote(note, currentUserId = null) {
     content: note.content,
     createdAt: note.createdAt,
     isAnonymous,
+    voteCount,
+    myVoted,
   };
 
   if (currentUserId !== null && currentUserId !== undefined) {
@@ -188,6 +213,9 @@ router.get('/retros/:id', authMiddleware, async (req, res) => {
             author: {
               select: { id: true, fullName: true, email: true, avatar: true },
             },
+            votes: {
+              select: { userId: true },
+            },
           },
         },
       },
@@ -208,6 +236,12 @@ router.get('/retros/:id', authMiddleware, async (req, res) => {
       ACTION_ITEM: [],
     };
 
+    // Tính số phiếu đã dùng của người gọi trong buổi này (SCRUM-75)
+    const usedVotes = (session.notes || []).reduce((acc, note) => {
+      return acc + ((note.votes || []).some((v) => v.userId === userId) ? 1 : 0);
+    }, 0);
+    const myVotesLeft = Math.max(0, MAX_VOTES - usedVotes);
+
     const serializedNotes = (session.notes || []).map((note) => serializeRetroNote(note, userId));
 
     serializedNotes.forEach((note) => {
@@ -220,6 +254,8 @@ router.get('/retros/:id', authMiddleware, async (req, res) => {
       ...session,
       notes: serializedNotes,
       columns,
+      myVotesLeft,
+      maxVotes: MAX_VOTES,
     });
   } catch (err) {
     console.error('Lỗi lấy chi tiết buổi Retrospective:', err);
@@ -276,6 +312,9 @@ router.post('/retros/:id/notes', authMiddleware, async (req, res) => {
       include: {
         author: {
           select: { id: true, fullName: true, email: true, avatar: true },
+        },
+        votes: {
+          select: { userId: true },
         },
       },
     });
@@ -344,6 +383,9 @@ router.patch('/retros/:id/notes/:noteId', authMiddleware, async (req, res) => {
       include: {
         author: {
           select: { id: true, fullName: true, email: true, avatar: true },
+        },
+        votes: {
+          select: { userId: true },
         },
       },
     });
@@ -462,6 +504,137 @@ router.patch('/retros/:id', authMiddleware, async (req, res) => {
   }
 });
 
+/**
+ * POST /retros/:retroId/notes/:noteId/vote
+ * Bình chọn cho sticky note trong buổi Retro (SCRUM-75)
+ * Giới hạn MAX_VOTES = 3 phiếu / người / buổi. Buổi phải OPEN.
+ */
+router.post(
+  ['/retros/:retroId/notes/:noteId/vote', '/retros/:id/notes/:noteId/vote'],
+  authMiddleware,
+  async (req, res) => {
+    try {
+      const retroId = req.params.retroId || req.params.id;
+      const { noteId } = req.params;
+      const userId = getUserId(req);
+
+      const session = await prisma.retroSession.findUnique({
+        where: { id: retroId },
+      });
+
+      if (!session) {
+        return res.status(404).json({ error: 'Không tìm thấy buổi Retrospective' });
+      }
+
+      const isMember = await isProjectMember(userId, session.projectId);
+      if (!isMember) {
+        return res.status(403).json({ error: 'Bạn không có quyền truy cập buổi Retrospective này' });
+      }
+
+      if (session.status === 'CLOSED') {
+        return res.status(400).json({ error: 'Buổi Retrospective đã kết thúc, không thể vote' });
+      }
+
+      const note = await prisma.retroNote.findUnique({
+        where: { id: noteId },
+      });
+
+      if (!note || note.sessionId !== retroId) {
+        return res.status(404).json({ error: 'Không tìm thấy ghi chú' });
+      }
+
+      // Kiểm tra và tạo vote trong transaction để không vượt giới hạn khi bấm nhanh
+      const result = await prisma.$transaction(async (tx) => {
+        // 1. Kiểm tra đã vote note này chưa -> 409
+        const existingVote = await tx.retroVote.findUnique({
+          where: {
+            noteId_userId: {
+              noteId,
+              userId,
+            },
+          },
+        });
+
+        if (existingVote) {
+          const err = new Error('Bạn đã vote note này rồi');
+          err.statusCode = 409;
+          throw err;
+        }
+
+        // 2. Kiểm tra tổng số phiếu đã dùng trong buổi này -> 400
+        const usedVotes = await tx.retroVote.count({
+          where: {
+            userId,
+            note: {
+              sessionId: retroId,
+            },
+          },
+        });
+
+        if (usedVotes >= MAX_VOTES) {
+          const err = new Error(`Bạn đã dùng hết ${MAX_VOTES} phiếu`);
+          err.statusCode = 400;
+          throw err;
+        }
+
+        // 3. Tạo vote
+        await tx.retroVote.create({
+          data: {
+            noteId,
+            userId,
+          },
+        });
+
+        // 4. Lấy tổng số voteCount mới của note
+        const voteCount = await tx.retroVote.count({
+          where: { noteId },
+        });
+
+        // 5. Lấy note cập nhật để serialize
+        const updatedNote = await tx.retroNote.findUnique({
+          where: { id: noteId },
+          include: {
+            author: { select: { id: true, fullName: true, email: true, avatar: true } },
+            votes: { select: { userId: true } },
+          },
+        });
+
+        return {
+          updatedNote,
+          voteCount,
+          myVotesLeft: Math.max(0, MAX_VOTES - (usedVotes + 1)),
+        };
+      });
+
+      // Emit RETRO_NOTE_VOTED tới room project_{projectId} với payload {noteId, voteCount}, không chứa userId, myVoted
+      const io = getIO();
+      if (io) {
+        io.to(`project_${session.projectId}`).to(session.projectId).emit('RETRO_NOTE_VOTED', {
+          noteId,
+          voteCount: result.voteCount,
+        });
+      }
+
+      const serialized = serializeRetroNote(result.updatedNote, userId);
+      return res.json({
+        ...serialized,
+        voteCount: result.voteCount,
+        myVotesLeft: result.myVotesLeft,
+      });
+    } catch (err) {
+      if (err.statusCode) {
+        return res.status(err.statusCode).json({ error: err.message });
+      }
+      if (err.code === 'P2002') {
+        return res.status(409).json({ error: 'Bạn đã vote note này rồi' });
+      }
+      console.error('Lỗi vote note Retrospective:', err);
+      return res.status(500).json({ error: 'Lỗi server khi vote ghi chú: ' + err.message });
+    }
+  }
+);
+
 module.exports = router;
 module.exports.serializeRetroNote = serializeRetroNote;
+module.exports.MAX_VOTES = MAX_VOTES;
 

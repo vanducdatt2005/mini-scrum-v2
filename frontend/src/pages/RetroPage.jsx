@@ -12,6 +12,7 @@ import api, {
   addRetroNote,
   updateRetroNote,
   deleteRetroNote,
+  voteRetroNote,
   updateRetroSession,
   getSprintsByProject,
   getAvatarUrl,
@@ -108,6 +109,10 @@ export default function RetroPage() {
   const [editingContent, setEditingContent] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
 
+  // State bình chọn sticky note (SCRUM-75)
+  const [myVotesLeft, setMyVotesLeft] = useState(3);
+  const [votingNoteId, setVotingNoteId] = useState(null);
+
   // Tải danh sách buổi khi mở trang
   useEffect(() => {
     if (projectId) {
@@ -158,6 +163,11 @@ export default function RetroPage() {
     try {
       const res = await getRetroDetails(sessionId);
       setActiveSession(res.data);
+      if (typeof res.data?.myVotesLeft === 'number') {
+        setMyVotesLeft(res.data.myVotesLeft);
+      } else {
+        setMyVotesLeft(3);
+      }
       setColumnsData(
         res.data.columns || {
           WENT_WELL: [],
@@ -173,7 +183,7 @@ export default function RetroPage() {
     }
   };
 
-  // Upsert note theo id (SCRUM-63 & SCRUM-74)
+  // Upsert note theo id (SCRUM-63 & SCRUM-74 & SCRUM-75)
   const upsertNote = (incoming) => {
     if (!incoming || !incoming.id || !incoming.column) return;
     setColumnsData((prev) => {
@@ -192,9 +202,21 @@ export default function RetroPage() {
           ? existingNote.isMine
           : (incoming.isMine !== undefined ? incoming.isMine : false);
 
+      const myVoted =
+        existingNote && existingNote.myVoted !== undefined
+          ? existingNote.myVoted
+          : (incoming.myVoted !== undefined ? incoming.myVoted : false);
+
+      const voteCount =
+        incoming.voteCount !== undefined
+          ? incoming.voteCount
+          : (existingNote ? existingNote.voteCount || 0 : 0);
+
       const mergedNote = {
         ...incoming,
         isMine,
+        myVoted,
+        voteCount,
       };
 
       const nextState = {};
@@ -240,7 +262,7 @@ export default function RetroPage() {
     });
   };
 
-  // Realtime Socket Listeners (SCRUM-59, SCRUM-74)
+  // Realtime Socket Listeners (SCRUM-59, SCRUM-74, SCRUM-75)
   useEffect(() => {
     if (!projectId) return;
     const socket = getSocket();
@@ -268,12 +290,43 @@ export default function RetroPage() {
       removeNote(deletedId);
     };
 
+    const handleNoteVoted = (data) => {
+      const noteId = data?.noteId;
+      const voteCount = data?.voteCount;
+      if (!noteId) return;
+
+      // Cập nhật voteCount theo noteId, giữ nguyên myVoted, isMine (SCRUM-75)
+      setColumnsData((prev) => {
+        const nextState = {};
+        let changed = false;
+        for (const colKey of Object.keys(prev)) {
+          const list = prev[colKey];
+          const idx = list.findIndex((n) => n.id === noteId);
+          if (idx >= 0) {
+            changed = true;
+            const updatedList = [...list];
+            updatedList[idx] = {
+              ...updatedList[idx],
+              voteCount,
+            };
+            nextState[colKey] = updatedList;
+          } else {
+            nextState[colKey] = list;
+          }
+        }
+        return changed ? nextState : prev;
+      });
+    };
+
     const handleReconnect = () => {
       if (activeSessionRef.current?.id) {
         getRetroDetails(activeSessionRef.current.id)
           .then((res) => {
             if (res.data?.columns) {
               setColumnsData(res.data.columns);
+            }
+            if (typeof res.data?.myVotesLeft === 'number') {
+              setMyVotesLeft(res.data.myVotesLeft);
             }
           })
           .catch((err) => {
@@ -285,6 +338,7 @@ export default function RetroPage() {
     socket.on('RETRO_NOTE_CREATED', handleCreated);
     socket.on('RETRO_NOTE_UPDATED', handleUpdated);
     socket.on('RETRO_NOTE_DELETED', handleDeleted);
+    socket.on('RETRO_NOTE_VOTED', handleNoteVoted);
     socket.on('connect', handleReconnect);
     const offReconnect = onSocketReconnect(handleReconnect);
 
@@ -292,6 +346,7 @@ export default function RetroPage() {
       socket.off('RETRO_NOTE_CREATED', handleCreated);
       socket.off('RETRO_NOTE_UPDATED', handleUpdated);
       socket.off('RETRO_NOTE_DELETED', handleDeleted);
+      socket.off('RETRO_NOTE_VOTED', handleNoteVoted);
       socket.off('connect', handleReconnect);
       offReconnect();
     };
@@ -506,6 +561,70 @@ export default function RetroPage() {
     }
   };
 
+  // Vote sticky note (SCRUM-75)
+  const handleVoteNote = async (note) => {
+    if (!activeSession) return;
+    if (activeSession.status === 'CLOSED') {
+      toast.error('Buổi Retrospective đã kết thúc, không thể vote');
+      return;
+    }
+    if (note.myVoted) {
+      toast.error('Bạn đã vote note này rồi');
+      return;
+    }
+    if (myVotesLeft <= 0) {
+      toast.error('Bạn đã dùng hết 3 phiếu');
+      return;
+    }
+
+    const prevVotesLeft = myVotesLeft;
+    const colId = note.column;
+    const oldVoteCount = note.voteCount || 0;
+
+    // Optimistic update
+    setVotingNoteId(note.id);
+    setMyVotesLeft((prev) => Math.max(0, prev - 1));
+    setColumnsData((prev) => ({
+      ...prev,
+      [colId]: (prev[colId] || []).map((n) =>
+        n.id === note.id ? { ...n, voteCount: oldVoteCount + 1, myVoted: true } : n
+      ),
+    }));
+
+    try {
+      const res = await voteRetroNote(activeSession.id, note.id);
+      // Người vote cập nhật giao diện ngay từ response của mình (SCRUM-75)
+      if (typeof res.data?.myVotesLeft === 'number') {
+        setMyVotesLeft(res.data.myVotesLeft);
+      }
+      setColumnsData((prev) => ({
+        ...prev,
+        [colId]: (prev[colId] || []).map((n) =>
+          n.id === note.id
+            ? {
+                ...n,
+                voteCount: res.data.voteCount ?? oldVoteCount + 1,
+                myVoted: true,
+              }
+            : n
+        ),
+      }));
+      toast.success('Đã bình chọn ghi chú');
+    } catch (err) {
+      // Khôi phục khi lỗi và hiện toast thông báo
+      setMyVotesLeft(prevVotesLeft);
+      setColumnsData((prev) => ({
+        ...prev,
+        [colId]: (prev[colId] || []).map((n) =>
+          n.id === note.id ? { ...n, voteCount: oldVoteCount, myVoted: false } : n
+        ),
+      }));
+      toast.error(err.response?.data?.error || 'Không thể bình chọn ghi chú');
+    } finally {
+      setVotingNoteId(null);
+    }
+  };
+
   return (
     <MainLayout activePage="Retrospective" projectId={projectId}>
       <div className="max-w-7xl mx-auto space-y-6">
@@ -637,6 +756,12 @@ export default function RetroPage() {
                   Tạo bởi {activeSession.createdBy?.fullName || 'Thành viên'} vào{' '}
                   {new Date(activeSession.createdAt).toLocaleDateString('vi-VN')}
                 </span>
+              </div>
+
+              {/* Hiển thị số phiếu bầu còn lại (SCRUM-75) */}
+              <div className="flex items-center gap-1.5 px-3 py-1 bg-primary/10 text-primary border border-primary/20 rounded-full text-xs font-semibold shadow-xs">
+                <span className="material-symbols-outlined text-[15px]">how_to_vote</span>
+                <span>Còn {myVotesLeft}/3 phiếu</span>
               </div>
             </div>
 
@@ -802,6 +927,37 @@ export default function RetroPage() {
                                 </div>
 
                                 <div className="flex items-center gap-2">
+                                  {/* Nút Vote (SCRUM-75) */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleVoteNote(note)}
+                                    disabled={
+                                      note.myVoted ||
+                                      myVotesLeft <= 0 ||
+                                      activeSession.status === 'CLOSED' ||
+                                      votingNoteId === note.id
+                                    }
+                                    title={
+                                      note.myVoted
+                                        ? 'Bạn đã vote note này rồi'
+                                        : myVotesLeft <= 0
+                                        ? 'Bạn đã dùng hết 3 phiếu'
+                                        : activeSession.status === 'CLOSED'
+                                        ? 'Buổi đã đóng'
+                                        : 'Bình chọn cho note này'
+                                    }
+                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-semibold transition-all select-none ${
+                                      note.myVoted
+                                        ? 'bg-primary text-white shadow-xs cursor-default'
+                                        : myVotesLeft <= 0 || activeSession.status === 'CLOSED'
+                                        ? 'bg-surface-container-high/60 text-on-surface-variant/40 cursor-not-allowed border border-outline-variant/10'
+                                        : 'bg-surface-container-high hover:bg-primary/15 text-on-surface-variant hover:text-primary active:scale-95 border border-outline-variant/20'
+                                    }`}
+                                  >
+                                    <span className="material-symbols-outlined text-[13px]">thumb_up</span>
+                                    <span className="text-[11px] font-bold">{note.voteCount || 0}</span>
+                                  </button>
+
                                   <span className="text-[10px] shrink-0">
                                     {new Date(note.createdAt).toLocaleTimeString('vi-VN', {
                                       hour: '2-digit',

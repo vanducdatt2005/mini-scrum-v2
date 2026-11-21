@@ -1147,31 +1147,19 @@ export default function PokerRoomPage() {
                   </div>
 
                   {!isRevealed ? (
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={handleRevealCards}
-                        disabled={votedCount === 0}
-                        title={votedCount === 0 ? "Chưa có ai vote! Hãy chờ thành viên chọn bài để lật." : `Đã có ${votedCount} thành viên vote. Nhấn để lật bài.`}
-                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm ${
-                          votedCount === 0
-                            ? "bg-surface-container text-outline opacity-40 cursor-not-allowed border border-outline-variant/30"
-                            : "bg-primary text-white hover:bg-primary/90 active:scale-95 cursor-pointer shadow-md"
-                        }`}
-                      >
-                        <span className="material-symbols-outlined text-sm">visibility</span>
-                        <span>Lật bài {votedCount > 0 ? `(${votedCount})` : ''}</span>
-                      </button>
-
-                      {/* US-037 AC2: Thử chốt trước khi Reveal -> Bị từ chối */}
-                      <button
-                        onClick={() => handleFinalizePoints(0)}
-                        title="Chốt điểm trước khi Reveal (Sẽ bị từ chối theo AC2)"
-                        className="px-2.5 py-2 bg-surface-container/60 hover:bg-error/10 hover:text-error text-on-surface-variant/80 rounded-xl text-xs font-bold transition-all flex items-center gap-1 border border-outline-variant/20"
-                      >
-                        <span className="material-symbols-outlined text-sm">lock</span>
-                        <span className="hidden xl:inline">Chốt trước Reveal</span>
-                      </button>
-                    </div>
+                    <button
+                      onClick={handleRevealCards}
+                      disabled={votedCount === 0}
+                      title={votedCount === 0 ? "Chưa có ai vote! Hãy chờ thành viên chọn bài để lật." : `Đã có ${votedCount} thành viên vote. Nhấn để lật bài.`}
+                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm ${
+                        votedCount === 0
+                          ? "bg-surface-container text-outline opacity-40 cursor-not-allowed border border-outline-variant/30"
+                          : "bg-primary text-white hover:bg-primary/90 active:scale-95 cursor-pointer shadow-md"
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-sm">visibility</span>
+                      <span>Lật bài {votedCount > 0 ? `(${votedCount})` : ''}</span>
+                    </button>
                   ) : (
                     <button
                       onClick={handleResetRound}

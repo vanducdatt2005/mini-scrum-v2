@@ -98,6 +98,16 @@ async function isProjectMember(userId, projectId) {
   return user?.role === 'ADMIN';
 }
 
+// Check if user is PO or SM of the project (SCRUM-76)
+async function isProjectPOorSM(userId, projectId) {
+  if (!userId || !projectId) return false;
+  const member = await prisma.projectMember.findUnique({
+    where: { userId_projectId: { userId, projectId } },
+    select: { role: true, status: true },
+  });
+  return !!(member && (!member.status || member.status === 'ACCEPTED') && (member.role === 'PO' || member.role === 'SM'));
+}
+
 /**
  * POST /projects/:id/retros
  * Tạo buổi Retrospective mới
@@ -481,6 +491,11 @@ router.patch('/retros/:id', authMiddleware, async (req, res) => {
     if (status !== undefined) {
       if (!['OPEN', 'CLOSED'].includes(status)) {
         return res.status(400).json({ error: 'Trạng thái không hợp lệ (OPEN hoặc CLOSED)' });
+      }
+      // Chỉ PO hoặc SM mới được đóng/mở lại buổi Retro (SCRUM-76)
+      const canClose = await isProjectPOorSM(userId, session.projectId);
+      if (!canClose) {
+        return res.status(403).json({ error: 'Chỉ Product Owner hoặc Scrum Master mới được đóng buổi' });
       }
       updateData.status = status;
     }

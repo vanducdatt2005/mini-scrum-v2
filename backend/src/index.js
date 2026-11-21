@@ -92,6 +92,7 @@ app.use('/api/user-stories', userstoryRoutes);
 app.use('/api/standups', authMiddleware, standupRoutes);
 app.use('/api/sprints', authMiddleware, sprintCeremonyRoutes);
 app.use('/api/sprints', authMiddleware, standupRoutes);
+app.use('/api/projects', authMiddleware, standupRoutes);
 // Mô-đun Tổng kết Sprint (End Sprint & Contribution Assessment)
 // Auth được áp dụng bên trong router, không đưa vào đây để tránh chặn /api/login
 app.use('/api', sprintSummaryRoutes);

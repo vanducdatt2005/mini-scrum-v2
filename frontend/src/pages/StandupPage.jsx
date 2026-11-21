@@ -5,6 +5,7 @@ import { useSidebar } from '../context/SidebarContext';
 import StandupHistory from '../components/StandupHistory';
 import QuickDailyStandupForm from '../components/QuickDailyStandupForm';
 import OpenBlockersPanel from '../components/OpenBlockersPanel';
+import DailyDigestBoard from '../components/DailyDigestBoard';
 import { 
     getSprintDailyStandups, 
     checkSprintTodayStandup, 
@@ -184,8 +185,16 @@ export default function StandupPage() {
                 <div className="flex justify-center mb-6 md:mb-10 overflow-x-auto no-scrollbar">
                     <div className="bg-surface-container-low p-1 rounded-[20px] md:rounded-[24px] flex gap-1 shadow-inner border border-outline-variant/5 min-w-fit">
                         <button 
+                            onClick={() => setActiveTab('digest')}
+                            className={`flex items-center gap-2 px-4 md:px-7 py-2.5 md:py-3 rounded-[16px] md:rounded-[20px] font-bold text-xs md:text-sm transition-all duration-300 whitespace-nowrap ${activeTab === 'digest' ? 'bg-primary text-on-primary shadow-lg shadow-primary/20' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
+                        >
+                            <span className="material-symbols-outlined text-lg">newspaper</span>
+                            Bản tin hôm nay
+                        </button>
+
+                        <button 
                             onClick={() => setActiveTab('submit')}
-                            className={`flex items-center gap-2 px-4 md:px-8 py-2.5 md:py-3 rounded-[16px] md:rounded-[20px] font-bold text-xs md:text-sm transition-all duration-300 whitespace-nowrap ${activeTab === 'submit' ? 'bg-primary text-on-primary shadow-lg shadow-primary/20' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
+                            className={`flex items-center gap-2 px-4 md:px-7 py-2.5 md:py-3 rounded-[16px] md:rounded-[20px] font-bold text-xs md:text-sm transition-all duration-300 whitespace-nowrap ${activeTab === 'submit' ? 'bg-primary text-on-primary shadow-lg shadow-primary/20' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
                         >
                             <span className="material-symbols-outlined text-lg">bolt</span>
                             Quick Daily Form
@@ -193,7 +202,7 @@ export default function StandupPage() {
                         
                         <button 
                             onClick={() => setActiveTab('history')}
-                            className={`flex items-center gap-2 px-4 md:px-8 py-2.5 md:py-3 rounded-[16px] md:rounded-[20px] font-bold text-xs md:text-sm transition-all duration-300 whitespace-nowrap ${activeTab === 'history' ? 'bg-primary text-on-primary shadow-lg shadow-primary/20' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
+                            className={`flex items-center gap-2 px-4 md:px-7 py-2.5 md:py-3 rounded-[16px] md:rounded-[20px] font-bold text-xs md:text-sm transition-all duration-300 whitespace-nowrap ${activeTab === 'history' ? 'bg-primary text-on-primary shadow-lg shadow-primary/20' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
                         >
                             <span className="material-symbols-outlined text-lg">history</span>
                             Lịch sử Stand-up
@@ -204,7 +213,7 @@ export default function StandupPage() {
 
                         <button 
                             onClick={() => setActiveTab('blockers')}
-                            className={`flex items-center gap-2 px-4 md:px-8 py-2.5 md:py-3 rounded-[16px] md:rounded-[20px] font-bold text-xs md:text-sm transition-all duration-300 whitespace-nowrap ${activeTab === 'blockers' ? 'bg-red-600 text-white shadow-lg shadow-red-500/25' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
+                            className={`flex items-center gap-2 px-4 md:px-7 py-2.5 md:py-3 rounded-[16px] md:rounded-[20px] font-bold text-xs md:text-sm transition-all duration-300 whitespace-nowrap ${activeTab === 'blockers' ? 'bg-red-600 text-white shadow-lg shadow-red-500/25' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
                         >
                             <span className="material-symbols-outlined text-lg">crisis_alert</span>
                             Ai đang kẹt
@@ -224,7 +233,18 @@ export default function StandupPage() {
                 </div>
 
                 <div className="animate-in fade-in duration-500">
-                    {activeTab === 'submit' ? (
+                    {activeTab === 'digest' ? (
+                        <div className="max-w-6xl mx-auto">
+                            {/* Component Bản tin hôm nay (Daily Digest / Team Standup Board - AC1, AC2) */}
+                            <DailyDigestBoard 
+                                projectId={projectId}
+                                sprintId={selectedSprint?.id || activeSprint?.id}
+                                sprintName={selectedSprint?.name || activeSprint?.name}
+                                userRole={userRole}
+                                members={members}
+                            />
+                        </div>
+                    ) : activeTab === 'submit' ? (
                         <div className="max-w-2xl mx-auto">
                             {/* Component Quick Daily Standup Form (3 Fields) */}
                             <QuickDailyStandupForm 

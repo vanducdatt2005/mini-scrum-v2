@@ -113,10 +113,15 @@ async function postDailyStandupHandler(req, res) {
     });
   }
 
-  // 2. DTO / Schema Validation chặt chẽ cả 3 trường (AC2) + Bật cờ "Đang kẹt"
+  // 2. DTO / Schema Validation chặt chẽ cả 3 trường (AC2) + Bật cờ "Đang kẹt" + Mood
   const yesterdayWork = (req.body.yesterday_work ?? req.body.yesterdayWork ?? req.body.yesterday ?? '').toString().trim();
   const todayPlan = (req.body.today_plan ?? req.body.todayPlan ?? req.body.today ?? '').toString().trim();
   const blockers = (req.body.blockers ?? '').toString().trim();
+
+  // Tâm trạng / Cảm xúc (HAPPY, NORMAL, TIRED, STRESSED)
+  const VALID_MOODS = ['HAPPY', 'NORMAL', 'TIRED', 'STRESSED'];
+  const rawMood = (req.body.mood ?? 'NORMAL').toString().toUpperCase().trim();
+  const mood = VALID_MOODS.includes(rawMood) ? rawMood : 'NORMAL';
 
   // Xử lý cờ blocked & lý do ngắn blockerNote (AC1, AC2)
   const rawBlocked = req.body.blocked;
@@ -193,6 +198,7 @@ async function postDailyStandupHandler(req, res) {
         yesterdayWork,
         todayPlan,
         blockers,
+        mood,
         blocked: isBlocked,
         blockerNote: cleanedBlockerNote,
         blockerStatus: isBlocked ? 'OPEN' : null,
@@ -412,10 +418,20 @@ async function updateDailyStandupHandler(req, res) {
     });
   }
 
-  // 6. Validate chặt chẽ cả 3 trường (như khi tạo mới) + Cờ Đang kẹt
+  // 6. Validate chặt chẽ cả 3 trường (như khi tạo mới) + Cờ Đang kẹt + Mood
   const yesterdayWork = (req.body.yesterday_work ?? req.body.yesterdayWork ?? req.body.yesterday ?? '').toString().trim();
   const todayPlan = (req.body.today_plan ?? req.body.todayPlan ?? req.body.today ?? '').toString().trim();
   const blockers = (req.body.blockers ?? '').toString().trim();
+
+  // Tâm trạng / Cảm xúc
+  const VALID_MOODS = ['HAPPY', 'NORMAL', 'TIRED', 'STRESSED'];
+  let mood = standup.mood || 'NORMAL';
+  if (req.body.mood !== undefined) {
+    const rawMood = req.body.mood.toString().toUpperCase().trim();
+    if (VALID_MOODS.includes(rawMood)) {
+      mood = rawMood;
+    }
+  }
 
   // Xử lý cờ blocked & lý do ngắn blockerNote (AC1, AC2, Rule 3)
   const isBlocked = req.body.blocked !== undefined 
@@ -472,6 +488,7 @@ async function updateDailyStandupHandler(req, res) {
         yesterdayWork,
         todayPlan,
         blockers,
+        mood,
         blocked: isBlocked,
         blockerNote: cleanedBlockerNote,
         blockerStatus: isBlocked ? (standup.blockerStatus || 'OPEN') : null,
@@ -653,6 +670,157 @@ async function getDailyStandupDetailHandler(req, res) {
   }
 }
 
+/**
+ * 7. GET /api/projects/:projectId/sprints/:sprintId/daily-digest
+ * hoặc GET /api/sprints/:sprintId/daily-digest
+ * Trang "Bản tin hôm nay" (Daily Digest / Team Standup Board)
+ * - DoD Security Guard: currentUser phải là thành viên hợp lệ của Project (nếu không -> 403 Forbidden)
+ * - Params: date (YYYY-MM-DD), onlyBlocked (boolean)
+ * - Sắp xếp: user.fullName ASC (AC1)
+ * - Summary: { totalMembers, submittedCount, blockedCount }
+ */
+async function getDailyDigestHandler(req, res) {
+  const sprintId = req.params.sprintId;
+  const paramProjectId = req.params.projectId;
+  const userId = req.user?.userId;
+
+  if (!userId) {
+    return res.status(401).json({ error: "Chưa xác thực người dùng" });
+  }
+
+  // 1. Tìm Sprint
+  const sprint = await prisma.sprint.findUnique({
+    where: { id: sprintId },
+    include: {
+      project: { select: { id: true, name: true } }
+    }
+  });
+
+  if (!sprint) {
+    return res.status(404).json({ error: "Không tìm thấy Sprint", code: "SPRINT_NOT_FOUND" });
+  }
+
+  const effectiveProjectId = sprint.projectId;
+
+  // Nếu client truyền :projectId trên URL, kiểm tra sprint có thuộc project đó không
+  if (paramProjectId && paramProjectId !== effectiveProjectId) {
+    return res.status(400).json({
+      error: "Sprint này không thuộc dự án được chỉ định",
+      code: "PROJECT_SPRINT_MISMATCH"
+    });
+  }
+
+  // 2. DoD Security Guard: Kiểm tra currentUser phải thuộc project_members của project
+  const member = await prisma.projectMember.findFirst({
+    where: {
+      userId,
+      projectId: effectiveProjectId,
+      status: 'ACCEPTED'
+    }
+  });
+
+  let hasAccess = Boolean(member);
+  if (!hasAccess) {
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+    if (user && user.role === 'ADMIN') {
+      hasAccess = true;
+    }
+  }
+
+  if (!hasAccess) {
+    return res.status(403).json({
+      error: "Bạn không có quyền xem báo cáo Daily của dự án này",
+      code: "FORBIDDEN_PROJECT_ACCESS"
+    });
+  }
+
+  // 3. Xử lý tham số ngày (date) và bộ lọc onlyBlocked (AC1, AC2)
+  const clientDate = req.query.date;
+  const { dateStr, dateObj } = parseDateParam(clientDate);
+  const onlyBlocked = req.query.onlyBlocked === 'true' || req.query.onlyBlocked === true || req.query.onlyBlocked === 1 || req.query.onlyBlocked === '1';
+
+  try {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+
+    // 4. Lấy tổng số thành viên hợp lệ của dự án
+    const totalMembers = await prisma.projectMember.count({
+      where: {
+        projectId: effectiveProjectId,
+        status: 'ACCEPTED'
+      }
+    });
+
+    // 5. Truy vấn toàn bộ Daily trong ngày của Sprint
+    const allTodayStandups = await prisma.dailyStandup.findMany({
+      where: {
+        sprintId: sprint.id,
+        reportDate: dateObj
+      },
+      include: {
+        user: { select: { id: true, fullName: true, email: true, avatar: true } },
+        resolver: { select: { id: true, fullName: true, email: true, avatar: true } }
+      },
+      orderBy: [
+        { user: { fullName: 'asc' } },
+        { createdAt: 'desc' }
+      ]
+    });
+
+    const submittedCount = allTodayStandups.length;
+    const blockedCount = allTodayStandups.filter(s => s.blocked).length;
+
+    // Lọc theo onlyBlocked nếu được yêu cầu (AC2)
+    const targetStandups = onlyBlocked
+      ? allTodayStandups.filter(s => s.blocked)
+      : allTodayStandups;
+
+    // Chuẩn hóa dữ liệu từng item theo đúng schema yêu cầu của AC1
+    const items = targetStandups.map(item => ({
+      id: item.id,
+      userId: item.userId,
+      user: {
+        id: item.user?.id || item.userId,
+        fullName: item.user?.fullName || item.user?.email || 'Thành viên',
+        avatar: item.user?.avatar || null,
+        email: item.user?.email || ''
+      },
+      mood: item.mood || 'NORMAL',
+      yesterdayWork: item.yesterdayWork || item.yesterday || '',
+      todayPlan: item.todayPlan || item.today || '',
+      blockers: item.blockers || '',
+      blocked: Boolean(item.blocked),
+      blockerNote: item.blockerNote || null,
+      blockerStatus: item.blockerStatus || null,
+      blockerResolvedAt: item.blockerResolvedAt || null,
+      resolver: item.resolver ? {
+        id: item.resolver.id,
+        fullName: item.resolver.fullName || item.resolver.email,
+        avatar: item.resolver.avatar || null
+      } : null,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+      reportDate: formatReportDate(item.reportDate)
+    }));
+
+    return res.json({
+      projectId: effectiveProjectId,
+      sprintId: sprint.id,
+      sprintName: sprint.name,
+      date: dateStr,
+      onlyBlocked,
+      summary: {
+        totalMembers,
+        submittedCount,
+        blockedCount
+      },
+      items
+    });
+  } catch (err) {
+    console.error("Lỗi lấy Daily Digest:", err);
+    return res.status(500).json({ error: "Lỗi máy chủ khi lấy Bản tin Daily" });
+  }
+}
+
 // Đăng ký các endpoints cho Sprint Daily Standup
 router.post('/:sprintId/daily-standups', postDailyStandupHandler);
 router.get('/:sprintId/daily-standups', getDailyStandupsHandler);
@@ -662,6 +830,11 @@ router.put('/:sprintId/daily-standups/today', updateDailyStandupHandler);
 router.patch('/:sprintId/daily-standups/today', updateDailyStandupHandler);
 router.put('/:sprintId/daily-standups/:id', updateDailyStandupHandler);
 router.patch('/:sprintId/daily-standups/:id', updateDailyStandupHandler);
+
+// Đăng ký endpoints "Bản tin hôm nay" (Daily Digest)
+router.get('/projects/:projectId/sprints/:sprintId/daily-digest', getDailyDigestHandler);
+router.get('/:projectId/sprints/:sprintId/daily-digest', getDailyDigestHandler);
+router.get('/:sprintId/daily-digest', getDailyDigestHandler);
 
 // Đăng ký endpoints Blocker Management ("Ai đang kẹt" & "Đã gỡ")
 router.get('/:sprintId/blockers', getSprintBlockersHandler);

@@ -33,6 +33,7 @@ export default function QuickDailyStandupForm({
     const [blockers, setBlockers] = useState('');
     const [blocked, setBlocked] = useState(false);
     const [blockerNote, setBlockerNote] = useState('');
+    const [mood, setMood] = useState('NORMAL');
 
     // Form states
     const [errors, setErrors] = useState({});
@@ -74,6 +75,7 @@ export default function QuickDailyStandupForm({
                     setBlockers(record.blockers || '');
                     setBlocked(Boolean(record.blocked));
                     setBlockerNote(record.blockerNote || '');
+                    setMood(record.mood || 'NORMAL');
                     setIsEditing(false);
                 } else {
                     // Chưa gửi hôm nay hoặc đã sang ngày mới (AC2)
@@ -83,6 +85,7 @@ export default function QuickDailyStandupForm({
                     setBlockers('');
                     setBlocked(false);
                     setBlockerNote('');
+                    setMood('NORMAL');
                     setIsEditing(true);
                 }
             })
@@ -95,6 +98,7 @@ export default function QuickDailyStandupForm({
                     setBlockers(existingStandup.blockers || '');
                     setBlocked(Boolean(existingStandup.blocked));
                     setBlockerNote(existingStandup.blockerNote || '');
+                    setMood(existingStandup.mood || 'NORMAL');
                 }
             })
             .finally(() => {
@@ -190,6 +194,7 @@ export default function QuickDailyStandupForm({
             setBlockers(submittedStandup.blockers || '');
             setBlocked(Boolean(submittedStandup.blocked));
             setBlockerNote(submittedStandup.blockerNote || '');
+            setMood(submittedStandup.mood || 'NORMAL');
         }
         setErrors({});
         setApiError(null);
@@ -204,6 +209,7 @@ export default function QuickDailyStandupForm({
             setBlockers(submittedStandup.blockers || '');
             setBlocked(Boolean(submittedStandup.blocked));
             setBlockerNote(submittedStandup.blockerNote || '');
+            setMood(submittedStandup.mood || 'NORMAL');
         }
         setErrors({});
         setApiError(null);
@@ -236,6 +242,7 @@ export default function QuickDailyStandupForm({
                 yesterday_work: yesterdayWork.trim(),
                 today_plan: todayPlan.trim(),
                 blockers: blockers.trim(),
+                mood: mood || 'NORMAL',
                 blocked: Boolean(blocked),
                 blocker_note: blocked ? blockerNote.trim() : null
             };
@@ -416,6 +423,13 @@ export default function QuickDailyStandupForm({
                                         Same-Day Verified
                                     </span>
                                 )}
+                                {submittedStandup.mood && (
+                                    <span className="px-2.5 py-0.5 rounded-full bg-surface-container-highest text-on-surface text-[10px] font-bold flex items-center gap-1">
+                                        {submittedStandup.mood === 'HAPPY' ? '😄 Vui vẻ' :
+                                         submittedStandup.mood === 'TIRED' ? '😫 Mệt mỏi' :
+                                         submittedStandup.mood === 'STRESSED' ? '🤯 Căng thẳng' : '😐 Bình thường'}
+                                    </span>
+                                )}
                             </div>
                             <p className="text-xs text-on-surface-variant/80 font-medium mt-0.5">
                                 Gửi lúc {formatTime(submittedStandup.createdAt || submittedStandup.date || submittedStandup.reportDate)}
@@ -587,6 +601,38 @@ export default function QuickDailyStandupForm({
             )}
 
             <form onSubmit={handleSubmit} className="space-y-5">
+                {/* CHỌN CẢM XÚC HÔM NAY (MOOD SELECTOR) */}
+                <div>
+                    <label className="block text-xs font-black text-on-surface-variant uppercase tracking-wider mb-2 ml-1">
+                        Cảm xúc & Tâm trạng làm việc hôm nay:
+                    </label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {[
+                            { key: 'HAPPY', label: 'Vui vẻ', emoji: '😄', desc: 'Năng suất cao', activeClass: 'border-emerald-500 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300' },
+                            { key: 'NORMAL', label: 'Bình thường', emoji: '😐', desc: 'Ổn định', activeClass: 'border-sky-500 bg-sky-500/10 text-sky-800 dark:text-sky-300' },
+                            { key: 'TIRED', label: 'Mệt mỏi', emoji: '😫', desc: 'Cần nghỉ ngơi', activeClass: 'border-amber-500 bg-amber-500/10 text-amber-800 dark:text-amber-300' },
+                            { key: 'STRESSED', label: 'Quá tải', emoji: '🤯', desc: 'Cần hỗ trợ', activeClass: 'border-rose-500 bg-rose-500/10 text-rose-800 dark:text-rose-300' },
+                        ].map(item => (
+                            <button
+                                key={item.key}
+                                type="button"
+                                onClick={() => setMood(item.key)}
+                                className={`p-2.5 rounded-2xl border text-left transition-all cursor-pointer flex items-center gap-2.5 ${
+                                    mood === item.key 
+                                        ? `${item.activeClass} ring-2 ring-primary/20 font-bold shadow-sm` 
+                                        : 'border-outline-variant/15 bg-surface-container-lowest hover:bg-surface-container-low text-on-surface-variant'
+                                }`}
+                            >
+                                <span className="text-xl shrink-0">{item.emoji}</span>
+                                <div className="min-w-0">
+                                    <p className="text-xs font-bold leading-tight truncate">{item.label}</p>
+                                    <p className="text-[10px] opacity-60 leading-none mt-0.5 truncate">{item.desc}</p>
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
                 {/* TRƯỜNG 1: Hôm qua đã hoàn thành việc gì? */}
                 <div>
                     <label 

@@ -68,6 +68,25 @@ export const getDailyStandupDetail = async (dailyId) => {
     return response.data;
 };
 
+/**
+ * Lấy Bản tin hôm nay (Daily Digest / Team Standup Board - AC1, AC2)
+ * GET /api/projects/:projectId/sprints/:sprintId/daily-digest?date=YYYY-MM-DD&onlyBlocked=false
+ */
+export const getDailyDigest = async (projectId, sprintId, date = '', onlyBlocked = false) => {
+    const params = {};
+    if (date) params.date = date;
+    if (onlyBlocked) params.onlyBlocked = 'true';
+
+    try {
+        const response = await api.get(`/projects/${projectId}/sprints/${sprintId}/daily-digest`, { params });
+        return response.data;
+    } catch (err) {
+        // Fallback sang endpoint theo sprintId
+        const response = await api.get(`/sprints/${sprintId}/daily-digest`, { params });
+        return response.data;
+    }
+};
+
 // ==========================================
 // TƯƠNG THÍCH VỚI DỰ ÁN (PROJECT-LEVEL FALLBACK)
 // ==========================================

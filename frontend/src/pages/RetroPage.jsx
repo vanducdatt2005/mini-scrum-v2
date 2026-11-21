@@ -16,6 +16,7 @@ import api, {
   updateRetroSession,
   getSprintsByProject,
   getAvatarUrl,
+  getMyProjectRole,
 } from '../services/api';
 
 const COLUMNS = [
@@ -113,11 +114,17 @@ export default function RetroPage() {
   const [myVotesLeft, setMyVotesLeft] = useState(3);
   const [votingNoteId, setVotingNoteId] = useState(null);
 
+  // Vai trò trong dự án (SCRUM-76: ẩn nút Đóng buổi với thành viên thường)
+  const [myProjectRole, setMyProjectRole] = useState(null);
+
   // Tải danh sách buổi khi mở trang
   useEffect(() => {
     if (projectId) {
       loadSessions();
       loadSprints();
+      getMyProjectRole(projectId)
+        .then((res) => setMyProjectRole(res.data?.role || 'MEMBER'))
+        .catch(() => setMyProjectRole('MEMBER'));
     }
   }, [projectId]);
 
@@ -707,12 +714,14 @@ export default function RetroPage() {
                 >
                   {activeSession.status === 'OPEN' ? '🟢 Đang mở thảo luận' : '🔒 Đã kết thúc'}
                 </span>
-                <button
-                  onClick={handleToggleStatus}
-                  className="text-xs px-3 py-1 rounded-lg border border-outline-variant/20 hover:bg-surface-container-high text-on-surface-variant font-medium transition-colors"
-                >
-                  {activeSession.status === 'OPEN' ? 'Đóng buổi' : 'Mở lại'}
-                </button>
+                {(myProjectRole === 'PO' || myProjectRole === 'SM') && (
+                  <button
+                    onClick={handleToggleStatus}
+                    className="text-xs px-3 py-1 rounded-lg border border-outline-variant/20 hover:bg-surface-container-high text-on-surface-variant font-medium transition-colors"
+                  >
+                    {activeSession.status === 'OPEN' ? 'Đóng buổi' : 'Mở lại'}
+                  </button>
+                )}
               </div>
             )}
           </div>

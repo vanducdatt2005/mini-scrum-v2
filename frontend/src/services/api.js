@@ -145,7 +145,7 @@ export const getStoryPokerRoom = (storyId) => api.get(`/userstory/${storyId}/pok
 export const closePokerRoom = (roomId) => api.post(`/poker-room/${roomId}/close`);
 export const savePokerEstimate = (roomId, storyPoints) => api.post(`/poker-room/${roomId}/save-estimate`, { storyPoints });
 
-// RETROSPECTIVE (SCRUM-73 & SCRUM-74)
+// RETROSPECTIVE (SCRUM-73 & SCRUM-74 & SCRUM-75)
 export const getProjectRetros = (projectId) => api.get(`/projects/${projectId}/retros`);
 export const createProjectRetro = (projectId, data) => api.post(`/projects/${projectId}/retros`, data);
 export const getRetroDetails = (retroId) => api.get(`/retros/${retroId}`);
@@ -153,5 +153,6 @@ export const addRetroNote = (retroId, data) => api.post(`/retros/${retroId}/note
 export const updateRetroNote = (retroId, noteId, data) => api.patch(`/retros/${retroId}/notes/${noteId}`, data);
 export const deleteRetroNote = (retroId, noteId) => api.delete(`/retros/${retroId}/notes/${noteId}`);
 export const updateRetroSession = (retroId, data) => api.patch(`/retros/${retroId}`, data);
+export const voteRetroNote = (retroId, noteId) => api.post(`/retros/${retroId}/notes/${noteId}/vote`);
 
 export default api;

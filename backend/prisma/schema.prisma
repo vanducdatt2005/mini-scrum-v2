@@ -29,6 +29,7 @@ model User {
   activityLogs    ActivityLog[]        @relation("ActorActivityLogs")
   retroSessions   RetroSession[]       @relation("CreatedRetroSessions")
   retroNotes      RetroNote[]          @relation("AuthoredRetroNotes")
+  retroVotes      RetroVote[]          @relation("UserRetroVotes")
 }
 
 model Project {
@@ -372,6 +373,21 @@ model RetroNote {
 
   session     RetroSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   author      User         @relation("AuthoredRetroNotes", fields: [authorId], references: [id])
+  votes       RetroVote[]
 
   @@index([sessionId])
+}
+
+model RetroVote {
+  id        String    @id @default(cuid())
+  noteId    String
+  userId    String
+  createdAt DateTime  @default(now())
+
+  note      RetroNote @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  user      User      @relation("UserRetroVotes", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([noteId, userId])
+  @@index([noteId])
+  @@index([userId])
 }

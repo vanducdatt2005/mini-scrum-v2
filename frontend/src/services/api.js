@@ -138,12 +138,13 @@ export const getAvatarUrl = (avatarPath) => {
 };
 
 
-// PLANNING POKER (US-033)
+// PLANNING POKER (US-033 & US-037)
 export const createPokerRoom = (storyId) => api.post(`/userstory/${storyId}/poker-room`);
 export const getPokerRoom = (roomCodeOrId) => api.get(`/poker-room/${roomCodeOrId}`);
 export const getStoryPokerRoom = (storyId) => api.get(`/userstory/${storyId}/poker-room`);
 export const closePokerRoom = (roomId) => api.post(`/poker-room/${roomId}/close`);
-export const savePokerEstimate = (roomId, storyPoints) => api.post(`/poker-room/${roomId}/save-estimate`, { storyPoints });
+export const savePokerEstimate = (roomId, storyPoints, isRevealed) => api.post(`/poker-room/${roomId}/save-estimate`, { storyPoints, isRevealed });
+export const finalizePokerEstimate = (roomId, { storyPoints, isRevealed }) => api.post(`/poker-room/${roomId}/finalize`, { storyPoints, isRevealed });
 
 // RETROSPECTIVE (SCRUM-73 & SCRUM-74 & SCRUM-75)
 export const getProjectRetros = (projectId) => api.get(`/projects/${projectId}/retros`);

@@ -2,7 +2,8 @@ import React, { createContext, useContext, useEffect, useState, useRef, useCallb
 import { io } from 'socket.io-client';
 import { refreshToken } from '../services/api';
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || `http://${window.location.hostname}:5000`;
+const rawApiUrl = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:5000`;
+const SOCKET_URL = rawApiUrl.replace(/\/api\/?$/, '');
 const MAX_RECONNECT_ATTEMPTS = 5;
 
 // Helper kiểm tra token đã hết hạn hoặc sắp hết hạn (trong vòng 30s)
@@ -146,7 +147,7 @@ export const SocketProvider = ({ children }) => {
     const targetUserId = registeredUserId || currentUser?.id;
 
     console.log('🔄 Đang tự động rejoin lại các Room dự án và cá nhân:', { projectIds, targetUserId });
-    
+
     // Phát sự kiện batch rejoinRooms tới server
     s.emit('rejoinRooms', { projectIds, userId: targetUserId }, (res) => {
       console.log('✅ Server xác nhận đã rejoin các room:', res);
@@ -400,7 +401,7 @@ export const useSocketContext = () => {
 
 // Đăng ký subscriber cho một Project ID cụ thể
 export const subscribeProjectRoom = (projectId, callback) => {
-  if (!projectId || typeof callback !== 'function') return () => {};
+  if (!projectId || typeof callback !== 'function') return () => { };
 
   if (!activeProjectSubscribers.has(projectId)) {
     activeProjectSubscribers.set(projectId, new Set());
@@ -432,6 +433,6 @@ export const onSocketReconnect = (callback) => {
     reconnectCallbacks.add(callback);
     return () => reconnectCallbacks.delete(callback);
   }
-  return () => {};
+  return () => { };
 };
 

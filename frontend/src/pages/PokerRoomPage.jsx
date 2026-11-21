@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getSocket } from '../context/SocketContext';
-import { getPokerRoom, closePokerRoom, savePokerEstimate, getAvatarUrl } from '../services/api';
+import { getPokerRoom, closePokerRoom, savePokerEstimate, finalizePokerEstimate, getAvatarUrl } from '../services/api';
 import { toast } from 'react-hot-toast';
 
 // Bộ bài Planning Poker chuẩn Fibonacci theo yêu cầu US-034
@@ -41,6 +41,12 @@ export default function PokerRoomPage() {
   const [isChatCollapsed, setIsChatCollapsed] = useState(false);
   const chatBottomRef = useRef(null);
   const chatInputRef = useRef(null);
+
+  // US-037: Chốt Story Points từ Poker vào Backlog (PO/SM)
+  const [customPoints, setCustomPoints] = useState('');
+  const [selectedPointType, setSelectedPointType] = useState('MEDIAN');
+  const [isFinalizing, setIsFinalizing] = useState(false);
+  const [finalizedData, setFinalizedData] = useState(null);
 
   // 1. Tải thông tin phòng và kiểm tra quyền thành viên Project (AC2)
   useEffect(() => {
@@ -143,11 +149,29 @@ export default function PokerRoomPage() {
       setChatMessages((prev) => [...prev, msg]);
     };
 
+    // Lắng nghe sự kiện chốt Story Points & đóng phòng (US-037 AC1)
+    const handlePokerFinalized = (data) => {
+      setFinalizedData(data);
+      setRoomData((prev) => ({
+        ...prev,
+        status: 'CLOSED',
+        userStory: {
+          ...prev?.userStory,
+          storyPoints: data.storyPoints
+        }
+      }));
+      toast.success(data.message || `Đã chốt ${data.storyPoints} Story Points vào User Story! Phòng đã đóng.`, {
+        duration: 5000,
+        id: 'poker-finalized'
+      });
+    };
+
     socket.on('poker:stateUpdate', handleStateUpdate);
     socket.on('poker:yourVote', handleYourVote);
     socket.on('poker:error', handlePokerError);
     socket.on('poker:chatHistory', handleChatHistory);
     socket.on('poker:newMessage', handleNewMessage);
+    socket.on('poker:finalized', handlePokerFinalized);
 
     return () => {
       socket.emit('poker:leave', { roomCode: cleanCode });
@@ -156,6 +180,7 @@ export default function PokerRoomPage() {
       socket.off('poker:error', handlePokerError);
       socket.off('poker:chatHistory', handleChatHistory);
       socket.off('poker:newMessage', handleNewMessage);
+      socket.off('poker:finalized', handlePokerFinalized);
     };
   }, [roomData, currentUser, roomCode]);
 
@@ -268,25 +293,58 @@ export default function PokerRoomPage() {
     setTimeout(() => setCopiedCode(false), 2000);
   };
 
-  // Lưu Story Points vào US (SM/PO)
-  const handleSavePoints = async (points) => {
-    if (!roomData?.id) return;
-    setIsSavingEstimate(true);
+  // US-037 AC1 & AC2: Chốt Story Points từ Poker vào Backlog & Đóng phòng (Product Owner / SM)
+  const handleFinalizePoints = async (pointsToFinalize) => {
+    // AC2: Given chưa Reveal -> When Chốt -> Then bị từ chối
+    if (!isRevealed) {
+      toast.error('Không thể chốt điểm khi chưa Reveal các lá bài! Vui lòng nhấn Lật bài trước khi chốt.', {
+        id: 'poker-not-revealed-error'
+      });
+      return;
+    }
+
+    if (!isModerator && userRole !== 'PO' && userRole !== 'SM') {
+      toast.error('Chỉ Product Owner hoặc Scrum Master mới có quyền chốt điểm vào Backlog!');
+      return;
+    }
+
+    const pointsNum = parseInt(pointsToFinalize, 10);
+    if (isNaN(pointsNum) || pointsNum < 0) {
+      toast.error('Vui lòng nhập hoặc chọn số Story Points hợp lệ (>= 0)!');
+      return;
+    }
+
+    setIsFinalizing(true);
     try {
-      await savePokerEstimate(roomData.id, points);
-      toast.success(`Đã lưu ${points} Story Points vào User Story!`);
-      setRoomData(prev => ({
+      const res = await finalizePokerEstimate(roomData.id, {
+        storyPoints: pointsNum,
+        isRevealed: true
+      });
+
+      toast.success(`Đã chốt ${pointsNum} Story Points vào User Story! Phòng Poker đã đóng.`, {
+        duration: 4000
+      });
+
+      setFinalizedData(res.data);
+      setRoomData((prev) => ({
         ...prev,
+        status: 'CLOSED',
         userStory: {
-          ...prev.userStory,
-          storyPoints: parseInt(points, 10)
+          ...prev?.userStory,
+          storyPoints: pointsNum
         }
       }));
     } catch (err) {
-      toast.error('Lỗi khi lưu điểm Story Points');
+      const errMsg = err.response?.data?.error || 'Lỗi khi chốt điểm Story Points';
+      toast.error(errMsg);
     } finally {
-      setIsSavingEstimate(false);
+      setIsFinalizing(false);
     }
+  };
+
+  // Lưu Story Points vào US (SM/PO)
+  const handleSavePoints = async (points) => {
+    return handleFinalizePoints(points);
   };
 
   // Đóng phòng Poker
@@ -329,6 +387,7 @@ export default function PokerRoomPage() {
         count: members.filter(m => m.hasVoted).length,
         average: 'N/A',
         consensus: specialVotes.length > 0 ? specialVotes[0].vote : 'N/A',
+        median: 'N/A',
         max: null,
         min: null,
         diff: null,
@@ -344,6 +403,17 @@ export default function PokerRoomPage() {
     const values = numericEntries.map(e => e.val);
     const sum = values.reduce((acc, curr) => acc + curr, 0);
     const avg = (sum / values.length).toFixed(1);
+
+    // US-037: Tính Trung vị (Median)
+    const sortedValues = [...values].sort((a, b) => a - b);
+    const midIndex = Math.floor(sortedValues.length / 2);
+    let median;
+    if (sortedValues.length % 2 !== 0) {
+      median = sortedValues[midIndex];
+    } else {
+      const midAvg = (sortedValues[midIndex - 1] + sortedValues[midIndex]) / 2;
+      median = Number.isInteger(midAvg) ? midAvg : Number(midAvg.toFixed(1));
+    }
 
     // AC1: Tính Max, Min và Độ lệch cao - thấp (Spread = Max - Min)
     const max = Math.max(...values);
@@ -376,6 +446,7 @@ export default function PokerRoomPage() {
       count: values.length,
       average: avg,
       consensus: mode,
+      median, // US-037: Trung vị
       max,
       min,
       diff, // max - min
@@ -387,6 +458,15 @@ export default function PokerRoomPage() {
       specialVotes
     };
   }, [isRevealed, members]);
+
+  // US-037: Tự động khởi tạo giá trị điểm đề xuất ban đầu (Trung vị) khi Reveal
+  useEffect(() => {
+    if (isRevealed && statistics?.hasNumeric && statistics.median !== undefined && statistics.median !== 'N/A') {
+      if (customPoints === '' || customPoints === null) {
+        setCustomPoints(statistics.median);
+      }
+    }
+  }, [isRevealed, statistics?.median]);
 
   // US-036: Quản lý timer đếm ngược 30 giây (chỉ UI timer - AC1)
   useEffect(() => {
@@ -545,12 +625,19 @@ export default function PokerRoomPage() {
 
         {/* Nút hành động */}
         <div className="flex items-center gap-2 md:gap-3">
-          <div className="flex items-center gap-1.5 bg-emerald-500/10 text-emerald-600 px-3 py-1 rounded-full text-xs font-bold border border-emerald-500/20">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Đang diễn ra</span>
-          </div>
+          {roomData.status === 'CLOSED' || finalizedData ? (
+            <div className="flex items-center gap-1.5 bg-neutral-500/10 text-neutral-600 px-3 py-1 rounded-full text-xs font-bold border border-neutral-500/20">
+              <span className="w-2 h-2 rounded-full bg-neutral-500" />
+              <span>Đã đóng (Closed)</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 bg-emerald-500/10 text-emerald-600 px-3 py-1 rounded-full text-xs font-bold border border-emerald-500/20">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Đang diễn ra</span>
+            </div>
+          )}
 
-          {isModerator && (
+          {isModerator && roomData.status !== 'CLOSED' && !finalizedData && (
             <button
               onClick={handleCloseRoom}
               disabled={isClosingRoom}
@@ -589,10 +676,13 @@ export default function PokerRoomPage() {
 
             <div className="flex items-center justify-between pt-4 border-t border-outline-variant/20">
               <div className="text-xs font-medium text-on-surface-variant">
-                Story Points hiện tại:
+                Story Points Backlog:
               </div>
-              <div className="text-sm font-black px-3 py-1 bg-primary/10 text-primary rounded-xl">
-                {story.storyPoints !== null && story.storyPoints !== undefined ? `${story.storyPoints} SP` : 'Chưa gán'}
+              <div className="text-sm font-black px-3 py-1 bg-primary/10 text-primary rounded-xl flex items-center gap-1.5">
+                <span>{story.storyPoints !== null && story.storyPoints !== undefined ? `${story.storyPoints} SP` : 'Chưa gán'}</span>
+                {(roomData.status === 'CLOSED' || finalizedData) && (
+                  <span className="material-symbols-outlined text-xs text-emerald-600 font-bold" title="Điểm đã chốt vào Backlog">check_circle</span>
+                )}
               </div>
             </div>
           </div>
@@ -671,44 +761,149 @@ export default function PokerRoomPage() {
                 </div>
               ) : null}
 
-              {/* CÁC CHỈ SỐ THỐNG KÊ KHÁC */}
-              <div className="grid grid-cols-2 gap-3 mb-4">
-                <div className="bg-primary/5 p-3.5 rounded-2xl border border-primary/10 text-center">
-                  <div className="text-[10px] uppercase font-bold text-outline">Điểm trung bình</div>
-                  <div className="text-2xl font-black text-primary mt-0.5">{statistics.average}</div>
+              {/* CÁC CHỈ SỐ THỐNG KÊ (TRUNG VỊ, PHỔ BIẾN NHẤT, TRUNG BÌNH) - US-037 */}
+              <div className="grid grid-cols-3 gap-2 mb-4">
+                {/* 1. Điểm Trung vị (Median) */}
+                <div className="bg-primary/5 p-3 rounded-2xl border border-primary/15 text-center">
+                  <div className="text-[9px] uppercase font-bold text-outline">Trung vị (Median)</div>
+                  <div className="text-xl font-black text-primary mt-0.5">{statistics.median}</div>
                 </div>
-                <div className="bg-emerald-500/5 p-3.5 rounded-2xl border border-emerald-500/10 text-center">
-                  <div className="text-[10px] uppercase font-bold text-outline">Được chọn nhiều nhất</div>
-                  <div className="text-2xl font-black text-emerald-600 mt-0.5">{statistics.consensus}</div>
+
+                {/* 2. Điểm Phổ biến nhất (Consensus / Mode) */}
+                <div className="bg-emerald-500/5 p-3 rounded-2xl border border-emerald-500/15 text-center">
+                  <div className="text-[9px] uppercase font-bold text-outline">Phổ biến nhất</div>
+                  <div className="text-xl font-black text-emerald-600 mt-0.5">{statistics.consensus}</div>
+                </div>
+
+                {/* 3. Điểm Trung bình (Average) */}
+                <div className="bg-amber-500/5 p-3 rounded-2xl border border-amber-500/15 text-center">
+                  <div className="text-[9px] uppercase font-bold text-outline">Trung bình</div>
+                  <div className="text-xl font-black text-amber-600 mt-0.5">{statistics.average}</div>
                 </div>
               </div>
 
+              {/* KHU VỰC CHỐT STORY POINTS VÀO BACKLOG (DÀNH CHO PRODUCT OWNER / SM) - US-037 AC1 & AC2 */}
               {isModerator && (
-                <div className="space-y-2 pt-2 border-t border-outline-variant/10">
-                  <span className="text-[11px] font-bold text-on-surface-variant block">
-                    Gợi ý lưu điểm vào User Story:
-                  </span>
-                  <div className="flex gap-2">
-                    {statistics.consensus !== 'N/A' && (
-                      <button
-                        onClick={() => handleSavePoints(statistics.consensus)}
-                        disabled={isSavingEstimate}
-                        className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5"
-                      >
-                        <span className="material-symbols-outlined text-sm">check</span>
-                        <span>Lưu {statistics.consensus} SP</span>
-                      </button>
-                    )}
-                    {statistics.average !== 'N/A' && statistics.average !== statistics.consensus && (
-                      <button
-                        onClick={() => handleSavePoints(Math.round(parseFloat(statistics.average)))}
-                        disabled={isSavingEstimate}
-                        className="flex-1 py-2 bg-primary/10 hover:bg-primary/20 text-primary rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
-                      >
-                        <span>Lưu {Math.round(parseFloat(statistics.average))} SP (Làm tròn)</span>
-                      </button>
-                    )}
+                <div className="space-y-3 pt-3 border-t border-outline-variant/20">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black uppercase tracking-wider text-primary flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-sm">gavel</span>
+                      <span>Chốt Story Points vào Backlog</span>
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+                      PO / SM
+                    </span>
                   </div>
+
+                  <p className="text-[11px] text-on-surface-variant leading-relaxed">
+                    Chọn điểm trung vị, phổ biến nhất hoặc tự nhập điểm để lưu vào Backlog và đóng phòng.
+                  </p>
+
+                  {/* 3 Nút gợi ý nhanh */}
+                  <div className="grid grid-cols-3 gap-2">
+                    {/* Nút 1: Trung vị (Median) */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomPoints(statistics.median);
+                        setSelectedPointType('MEDIAN');
+                      }}
+                      className={`p-2 rounded-xl text-center border transition-all ${
+                        selectedPointType === 'MEDIAN'
+                          ? 'bg-primary text-white border-primary shadow-sm ring-2 ring-primary/30'
+                          : 'bg-surface-container/40 hover:bg-surface-container text-on-surface border-outline-variant/30'
+                      }`}
+                    >
+                      <div className="text-[9px] uppercase font-bold opacity-80">Trung vị</div>
+                      <div className="text-sm font-black font-mono mt-0.5">{statistics.median} SP</div>
+                    </button>
+
+                    {/* Nút 2: Chọn nhiều nhất (Mode) */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomPoints(statistics.consensus);
+                        setSelectedPointType('CONSENSUS');
+                      }}
+                      className={`p-2 rounded-xl text-center border transition-all ${
+                        selectedPointType === 'CONSENSUS'
+                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm ring-2 ring-emerald-500/30'
+                          : 'bg-surface-container/40 hover:bg-surface-container text-on-surface border-outline-variant/30'
+                      }`}
+                    >
+                      <div className="text-[9px] uppercase font-bold opacity-80">Phổ biến nhất</div>
+                      <div className="text-sm font-black font-mono mt-0.5">{statistics.consensus} SP</div>
+                    </button>
+
+                    {/* Nút 3: Trung bình làm tròn */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomPoints(Math.round(parseFloat(statistics.average)));
+                        setSelectedPointType('AVERAGE');
+                      }}
+                      className={`p-2 rounded-xl text-center border transition-all ${
+                        selectedPointType === 'AVERAGE'
+                          ? 'bg-amber-600 text-white border-amber-600 shadow-sm ring-2 ring-amber-500/30'
+                          : 'bg-surface-container/40 hover:bg-surface-container text-on-surface border-outline-variant/30'
+                      }`}
+                    >
+                      <div className="text-[9px] uppercase font-bold opacity-80">Trung bình</div>
+                      <div className="text-sm font-black font-mono mt-0.5">{Math.round(parseFloat(statistics.average))} SP</div>
+                    </button>
+                  </div>
+
+                  {/* Nhập số tự chọn & Nút Chốt */}
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
+                    <div className="flex-1 flex items-center bg-surface border border-outline-variant/40 rounded-xl px-3 py-2 focus-within:ring-2 focus-within:ring-primary/30">
+                      <span className="text-[11px] font-bold text-on-surface-variant mr-2 whitespace-nowrap">
+                        Điểm chốt:
+                      </span>
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={customPoints}
+                        onChange={(e) => {
+                          setCustomPoints(e.target.value);
+                          setSelectedPointType('CUSTOM');
+                        }}
+                        placeholder="Nhập SP..."
+                        className="w-full bg-transparent font-mono font-black text-sm text-primary focus:outline-none"
+                      />
+                      <span className="text-xs font-bold text-outline">SP</span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleFinalizePoints(customPoints)}
+                      disabled={isFinalizing || customPoints === '' || customPoints === null || roomData.status === 'CLOSED'}
+                      className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 shadow-md shrink-0 ${
+                        isFinalizing || customPoints === '' || customPoints === null || roomData.status === 'CLOSED'
+                          ? 'bg-surface-container text-outline opacity-50 cursor-not-allowed'
+                          : 'bg-primary text-white hover:bg-primary/90 active:scale-95 cursor-pointer'
+                      }`}
+                      title={!isRevealed ? "Cần Lật bài (Reveal) trước khi Chốt điểm" : "Chốt Story Points vào Backlog & Đóng phòng"}
+                    >
+                      <span className="material-symbols-outlined text-sm">
+                        {roomData.status === 'CLOSED' ? 'lock' : 'task_alt'}
+                      </span>
+                      <span>
+                        {roomData.status === 'CLOSED' 
+                          ? 'Đã chốt & Đóng phòng' 
+                          : isFinalizing 
+                          ? 'Đang chốt...' 
+                          : 'Chốt Story Points & Đóng'}
+                      </span>
+                    </button>
+                  </div>
+
+                  {roomData.status === 'CLOSED' && (
+                    <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-800 text-xs font-medium flex items-center gap-2">
+                      <span className="material-symbols-outlined text-base text-emerald-600">verified</span>
+                      <span>Story Points đã được đồng bộ vào Backlog (Mã phiên: #{finalizedData?.pokerSessionId || roomData.id}).</span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -889,6 +1084,40 @@ export default function PokerRoomPage() {
         <div className="lg:w-3/5 flex flex-col gap-6">
           {/* 1. KHU VỰC THÀNH VIÊN THAM GIA */}
           <div className="bg-surface-container-lowest p-6 rounded-3xl border border-outline-variant/20 shadow-sm flex-1 flex flex-col">
+            {/* US-037 AC1: BANNER THÔNG BÁO KHI PHÒNG POKER ĐÃ CHỐT VÀO BACKLOG */}
+            {(roomData.status === 'CLOSED' || finalizedData) && (
+              <div className="mb-6 p-4 md:p-5 rounded-2xl bg-gradient-to-r from-emerald-500/15 via-teal-500/15 to-emerald-500/15 border-2 border-emerald-500/40 shadow-sm animate-in fade-in duration-300">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold shadow-sm shrink-0">
+                      <span className="material-symbols-outlined text-xl">verified</span>
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-black text-sm text-on-surface">
+                          Đã chốt {story.storyPoints ?? finalizedData?.storyPoints} Story Points vào Backlog
+                        </h4>
+                        <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-600 text-white shadow-xs">
+                          Closed
+                        </span>
+                      </div>
+                      <p className="text-xs text-on-surface-variant mt-0.5">
+                        Phiên Poker <span className="font-mono font-bold text-primary">#{finalizedData?.pokerSessionId || roomData.id}</span> đã hoàn tất. Điểm số đã đồng bộ chính xác với Backlog của dự án.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => navigate(`/projects/${project.id}/board`)}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm shrink-0"
+                  >
+                    <span className="material-symbols-outlined text-sm">dashboard</span>
+                    <span>Xem Backlog</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-primary text-xl">group</span>
@@ -934,7 +1163,12 @@ export default function PokerRoomPage() {
                   ) : (
                     <button
                       onClick={handleResetRound}
-                      className="px-4 py-2 bg-surface-container-high hover:bg-primary/10 hover:text-primary text-on-surface rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
+                      disabled={roomData.status === 'CLOSED'}
+                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                        roomData.status === 'CLOSED'
+                          ? 'bg-surface-container text-outline opacity-40 cursor-not-allowed'
+                          : 'bg-surface-container-high hover:bg-primary/10 hover:text-primary text-on-surface'
+                      }`}
                     >
                       <span className="material-symbols-outlined text-sm">refresh</span>
                       <span>Vòng mới</span>

@@ -1927,33 +1927,146 @@ app.post("/api/poker-room/:id/close", authMiddleware, async (req, res) => {
   }
 });
 
-// 5. LƯU KẾT QUẢ STORY POINTS TỪ PHÒNG POKER VÀO USER STORY
-app.post("/api/poker-room/:id/save-estimate", authMiddleware, async (req, res) => {
+// 5. CHỐT STORY POINTS TỪ PHÒNG POKER VÀO USER STORY & ĐÓNG PHÒNG (US-037 AC1 & AC2)
+app.post(["/api/poker-room/:id/finalize", "/api/poker-room/:id/save-estimate"], authMiddleware, async (req, res) => {
   const { id } = req.params;
-  const { storyPoints } = req.body;
+  const { storyPoints, isRevealed } = req.body;
   const userId = req.user.userId;
 
   try {
-    const room = await prisma.pokerRoom.findUnique({ where: { id } });
+    const room = await prisma.pokerRoom.findUnique({
+      where: { id },
+      include: {
+        userStory: true,
+        project: true
+      }
+    });
     if (!room) return res.status(404).json({ error: "Phòng Poker không tồn tại" });
 
+    // Kiểm tra quyền hạn: Chỉ Product Owner (PO) hoặc Scrum Master (SM) mới có quyền Chốt điểm
     const member = await prisma.projectMember.findUnique({
       where: { userId_projectId: { userId, projectId: room.projectId } }
     });
 
-    if (!member || (member.role !== 'SM' && member.role !== 'PO' && room.createdById !== userId)) {
-      return res.status(403).json({ error: "Chỉ Scrum Master hoặc PO mới có quyền lưu điểm estimate" });
+    if (!member || (member.role !== 'PO' && member.role !== 'SM' && room.createdById !== userId)) {
+      return res.status(403).json({ error: "Chỉ Product Owner hoặc Scrum Master mới có quyền chốt điểm Story Points." });
     }
 
+    // AC2: Given chưa Reveal -> When Chốt -> Then bị từ chối
+    const roomCodeClean = room.roomCode.toUpperCase().trim();
+    let socketRoomState = null;
+    if (global.pokerRoomsState && global.pokerRoomsState.has(roomCodeClean)) {
+      socketRoomState = global.pokerRoomsState.get(roomCodeClean);
+    }
+
+    // Kiểm tra trạng thái Reveal từ memory socket state hoặc client gửi lên
+    const actuallyRevealed = socketRoomState ? Boolean(socketRoomState.isRevealed) : Boolean(isRevealed);
+    if (!actuallyRevealed) {
+      return res.status(400).json({
+        error: "Chưa thể chốt điểm khi chưa Reveal các lá bài! Vui lòng nhấn Lật bài trước khi chốt Story Points.",
+        code: "NOT_REVEALED"
+      });
+    }
+
+    // Kiểm tra giá trị điểm hợp lệ
     const points = parseInt(storyPoints, 10);
+    if (isNaN(points) || points < 0) {
+      return res.status(400).json({ error: "Điểm Story Points không hợp lệ. Vui lòng nhập hoặc chọn số điểm hợp lệ." });
+    }
+
+    // AC1: Cập nhật US.points
     const updatedStory = await prisma.userStory.update({
       where: { id: room.storyId },
-      data: { storyPoints: isNaN(points) ? null : points }
+      data: { storyPoints: points }
     });
 
-    res.json({ message: "Lưu điểm estimate thành công", story: updatedStory });
+    // AC1: Phòng -> Closed
+    const updatedRoom = await prisma.pokerRoom.update({
+      where: { id: room.id },
+      data: { status: 'CLOSED' }
+    });
+
+    if (socketRoomState) {
+      socketRoomState.status = 'CLOSED';
+    }
+
+    // Lưu lịch sử pokerSessionID gắn với User Story qua ActivityLog
+    try {
+      await prisma.activityLog.create({
+        data: {
+          projectId: room.projectId,
+          actorId: userId,
+          action: 'POKER_ESTIMATE_FINALIZED',
+          targetType: 'USER_STORY',
+          targetId: room.storyId,
+          targetTitle: updatedStory.title,
+          meta: {
+            pokerSessionId: room.id,
+            pokerSessionID: room.id,
+            roomCode: room.roomCode,
+            storyPoints: points,
+            finalizedBy: member.role || 'PO'
+          }
+        }
+      });
+    } catch (logErr) {
+      console.warn("Lưu ActivityLog poker estimate finalized thất bại:", logErr.message);
+    }
+
+    // Gửi thông báo realtime qua WebSocket tới phòng Poker và kênh dự án
+    try {
+      const io = getIO();
+      if (io) {
+        const roomChannel = `poker_${roomCodeClean}`;
+        io.to(roomChannel).emit("poker:finalized", {
+          roomCode: roomCodeClean,
+          pokerSessionId: room.id,
+          pokerSessionID: room.id,
+          storyPoints: points,
+          roomStatus: 'CLOSED',
+          finalizedBy: {
+            userId,
+            fullName: req.user.fullName || 'Product Owner',
+            role: member.role
+          },
+          message: `Product Owner đã chốt ${points} Story Points cho User Story này. Phòng Poker đã đóng!`
+        });
+
+        // Bắn sự kiện cập nhật User Story lên kênh dự án để Backlog và Board đồng bộ điểm tức thời
+        const projectChannel = `project_${room.projectId}`;
+        io.to(projectChannel).emit("userStoryUpdated", {
+          story: updatedStory,
+          pokerSessionId: room.id,
+          pokerSessionID: room.id,
+          storyPoints: points
+        });
+        io.to(projectChannel).emit("userStory:changed", {
+          action: "update",
+          data: updatedStory,
+          projectId: room.projectId,
+          eventId: `evt_story_${Date.now()}`
+        });
+        io.to(projectChannel).emit("pokerRoomClosed", {
+          roomId: room.id,
+          storyId: room.storyId,
+          storyPoints: points
+        });
+      }
+    } catch (ioErr) {
+      console.warn("Lỗi emit socket poker:finalized:", ioErr.message);
+    }
+
+    return res.json({
+      message: "Chốt Story Points thành công và phòng đã được đóng.",
+      story: updatedStory,
+      room: updatedRoom,
+      pokerSessionId: room.id,
+      pokerSessionID: room.id,
+      storyPoints: points
+    });
   } catch (err) {
-    res.status(500).json({ error: "Lỗi khi lưu điểm estimate: " + err.message });
+    console.error("Lỗi khi chốt điểm Story Points:", err);
+    return res.status(500).json({ error: "Lỗi khi chốt điểm Story Points: " + err.message });
   }
 });
 

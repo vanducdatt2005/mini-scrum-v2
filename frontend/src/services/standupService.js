@@ -87,6 +87,16 @@ export const getDailyDigest = async (projectId, sprintId, date = '', onlyBlocked
     }
 };
 
+/**
+ * Lấy chuỗi ngày gửi Daily liên tiếp trong Sprint (Sprint Daily Streak)
+ * GET /api/users/me/daily-streak?sprintId=...
+ */
+export const getMyDailyStreak = async (sprintId = null) => {
+    const params = sprintId ? { sprintId } : {};
+    const response = await api.get('/users/me/daily-streak', { params });
+    return response.data;
+};
+
 // ==========================================
 // TƯƠNG THÍCH VỚI DỰ ÁN (PROJECT-LEVEL FALLBACK)
 // ==========================================

@@ -18,6 +18,7 @@ const sprintSummaryRoutes = require('./routes/sprintSummaryRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const activityRoutes = require('./routes/activityRoutes');
 const retroRoutes = require('./routes/retroRoutes');
+const { getUserDailyStreak } = require('./services/streakService');
 const { recordActivity, diffAndRecord, logActivity } = require('./services/activityService');
 const { sendTaskAssignmentNotification } = require('./services/notificationService');
 
@@ -2480,9 +2481,35 @@ app.get("/api/user/profile", authMiddleware, async (req, res) => {
       select: { id: true, email: true, fullName: true, role: true, avatar: true }
     });
     if (!user) return res.status(404).json({ error: "Không tìm thấy người dùng" });
-    res.json(user);
+
+    let dailyStreak = null;
+    try {
+      dailyStreak = await getUserDailyStreak(prisma, req.user.userId, {
+        sprintId: req.query.sprintId || null
+      });
+    } catch (streakErr) {
+      console.warn("Không thể tải dailyStreak cho profile:", streakErr.message);
+    }
+
+    res.json({ ...user, dailyStreak });
   } catch (err) {
     res.status(500).json({ error: "Lỗi máy chủ khi lấy thông tin người dùng" });
+  }
+});
+
+// GET Sprint Daily Streak (GET /api/users/me/daily-streak)
+app.get("/api/users/me/daily-streak", authMiddleware, async (req, res) => {
+  try {
+    const sprintId = req.query.sprintId || null;
+    const skipWeekends = req.query.skipWeekends === 'true';
+    const streak = await getUserDailyStreak(prisma, req.user.userId, {
+      sprintId,
+      skipWeekends
+    });
+    res.json(streak);
+  } catch (err) {
+    console.error("Lỗi khi tính Sprint Daily Streak:", err);
+    res.status(500).json({ error: "Lỗi máy chủ khi tính Sprint Daily Streak" });
   }
 });
 

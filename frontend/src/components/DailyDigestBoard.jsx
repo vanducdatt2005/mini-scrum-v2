@@ -535,6 +535,19 @@ export default function DailyDigestBoard({
                                                 {item.blockers || 'Không có vướng mắc nào.'}
                                             </div>
                                         </div>
+
+                                        {/* Bonus UX: Câu hỏi phụ vui nhộn (Fun Icebreaker Prompt) */}
+                                        {item.funPromptAnswer && (
+                                            <div className="mt-2 p-3 rounded-2xl bg-violet-500/8 border border-dashed border-violet-400/35 text-xs">
+                                                <p className="text-[10px] font-bold text-violet-700 dark:text-violet-300 flex items-center gap-1 mb-1">
+                                                    <span>✨</span>
+                                                    <span>{item.funPromptQuestion || 'Góc vui vẻ hôm nay'}</span>
+                                                </p>
+                                                <p className="text-on-surface/90 italic font-medium leading-relaxed">
+                                                    “{item.funPromptAnswer}”
+                                                </p>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
 

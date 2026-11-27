@@ -144,6 +144,10 @@ model DailyStandup {
   // Tâm trạng / Cảm xúc ('HAPPY', 'NORMAL', 'TIRED', 'STRESSED')
   mood          String?  @default("NORMAL") @map("mood")
 
+  // Câu hỏi phụ vui nhộn ngẫu nhiên (Fun Icebreaker Prompt - Optional)
+  funPromptQuestion String? @map("fun_prompt_question")
+  funPromptAnswer   String? @map("fun_prompt_answer")
+
   // Tính năng Bật cờ "Đang kẹt" (Blocked) & lý do ngắn
   blocked           Boolean   @default(false) @map("blocked")
   blockerNote       String?   @map("blocker_note") @db.VarChar(255)

@@ -6,9 +6,11 @@ import MyTasks from "../components/MyTasks";
 import ActivityFeed from "../components/ActivityFeed";
 import RecentActivity from "../components/RecentActivity";
 import SprintStats from "../components/SprintStats";
+import DailyStreakCard from "../components/DailyStreakCard";
 import FAB from "../components/FAB";
 import JoinProjectModal from "../components/JoinProjectModal";
 import api, { getDashboardStats, getSprintsByProject } from "../services/api";
+import { getMyDailyStreak } from "../services/standupService";
 
 const getTimeRemaining = (endDate) => {
   if (!endDate) return "N/A";
@@ -26,6 +28,7 @@ export default function Dashboard() {
   const [projects, setProjects] = useState([]);
   const [stats, setStats] = useState(null);
   const [activeSprint, setActiveSprint] = useState(null);
+  const [dailyStreak, setDailyStreak] = useState(null);
   const [projectId, setProjectId] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showJoinModal, setShowJoinModal] = useState(false);
@@ -69,7 +72,15 @@ export default function Dashboard() {
         
         if (sprintsRes && sprintsRes.data) {
           const active = sprintsRes.data.find(s => s.status === 'ACTIVE');
-          setActiveSprint(active || sprintsRes.data[0] || null);
+          const targetSprint = active || sprintsRes.data[0] || null;
+          setActiveSprint(targetSprint);
+          if (targetSprint?.id) {
+            getMyDailyStreak(targetSprint.id)
+              .then(streakData => setDailyStreak(streakData))
+              .catch(() => setDailyStreak(null));
+          } else {
+            setDailyStreak(null);
+          }
         }
       });
     }
@@ -194,6 +205,7 @@ export default function Dashboard() {
               <MyTasks projectId={projectId} />
             </div>
             <div className="flex flex-col gap-6">
+              {dailyStreak && <DailyStreakCard streak={dailyStreak} />}
               <SprintStats
                 projectId={projectId}
                 timeRemaining={activeSprint && activeSprint.status === 'ACTIVE' ? getTimeRemaining(activeSprint.endDate) : "N/A"}

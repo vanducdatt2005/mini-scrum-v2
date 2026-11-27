@@ -6,12 +6,14 @@ import StandupHistory from '../components/StandupHistory';
 import QuickDailyStandupForm from '../components/QuickDailyStandupForm';
 import OpenBlockersPanel from '../components/OpenBlockersPanel';
 import DailyDigestBoard from '../components/DailyDigestBoard';
+import DailyStreakCard from '../components/DailyStreakCard';
 import { 
     getSprintDailyStandups, 
     checkSprintTodayStandup, 
     getProjectStandups, 
     checkTodayStandup,
-    getSprintBlockers
+    getSprintBlockers,
+    getMyDailyStreak
 } from '../services/standupService';
 import api from '../services/api';
 
@@ -27,6 +29,7 @@ export default function StandupPage() {
     const [activeTab, setActiveTab] = useState('submit'); // 'submit' | 'history' | 'blockers'
     const [alreadySubmitted, setAlreadySubmitted] = useState(false);
     const [openBlockerCount, setOpenBlockerCount] = useState(0);
+    const [dailyStreak, setDailyStreak] = useState(null);
     const [loading, setLoading] = useState(true);
     const [filterMemberId, setFilterMemberId] = useState('ALL');
     const [filterDate, setFilterDate] = useState('');
@@ -59,17 +62,19 @@ export default function StandupPage() {
             setSelectedSprint(activeSprint);
 
             if (activeSprint) {
-                // Tải dữ liệu Daily theo Sprint & số Blocker đang mở
-                const [statusRes, dailyRes, blockersRes] = await Promise.all([
+                // Tải dữ liệu Daily theo Sprint, số Blocker đang mở & Sprint Daily Streak
+                const [statusRes, dailyRes, blockersRes, streakRes] = await Promise.all([
                     checkSprintTodayStandup(activeSprint.id).catch(() => ({ submitted: false, standup: null })),
                     getSprintDailyStandups(activeSprint.id).catch(() => ({ standups: [] })),
-                    getSprintBlockers(activeSprint.id, 'OPEN').catch(() => ({ blockers: [] }))
+                    getSprintBlockers(activeSprint.id, 'OPEN').catch(() => ({ blockers: [] })),
+                    getMyDailyStreak(activeSprint.id).catch(() => null)
                 ]);
 
                 setAlreadySubmitted(Boolean(statusRes.submitted));
                 setTodayStandup(statusRes.standup || null);
                 setStandups(dailyRes.standups || []);
                 setOpenBlockerCount(blockersRes.blockers?.length || 0);
+                setDailyStreak(streakRes);
 
                 if ((roleRes.data?.role === 'SM' || roleRes.data?.role === 'PO') && statusRes.submitted) {
                     setActiveTab('history');
@@ -97,12 +102,14 @@ export default function StandupPage() {
         setSelectedSprint(found);
         if (found) {
             try {
-                const [dailyRes, blockersRes] = await Promise.all([
+                const [dailyRes, blockersRes, streakRes] = await Promise.all([
                     getSprintDailyStandups(found.id).catch(() => ({ standups: [] })),
-                    getSprintBlockers(found.id, 'OPEN').catch(() => ({ blockers: [] }))
+                    getSprintBlockers(found.id, 'OPEN').catch(() => ({ blockers: [] })),
+                    getMyDailyStreak(found.id).catch(() => null)
                 ]);
                 setStandups(dailyRes.standups || []);
                 setOpenBlockerCount(blockersRes.blockers?.length || 0);
+                setDailyStreak(streakRes);
             } catch (err) {
                 console.error("Lỗi tải lịch sử sprint:", err);
             }
@@ -118,12 +125,14 @@ export default function StandupPage() {
         const targetSprintId = selectedSprint?.id || activeSprint?.id;
         if (targetSprintId) {
             try {
-                const [res, blockersRes] = await Promise.all([
+                const [res, blockersRes, streakRes] = await Promise.all([
                     getSprintDailyStandups(targetSprintId).catch(() => ({ standups: [] })),
-                    getSprintBlockers(targetSprintId, 'OPEN').catch(() => ({ blockers: [] }))
+                    getSprintBlockers(targetSprintId, 'OPEN').catch(() => ({ blockers: [] })),
+                    getMyDailyStreak(targetSprintId).catch(() => null)
                 ]);
                 setStandups(res.standups || []);
                 setOpenBlockerCount(blockersRes.blockers?.length || 0);
+                if (streakRes) setDailyStreak(streakRes);
             } catch (err) {
                 console.error("Lỗi cập nhật lịch sử sau khi submit:", err);
             }
@@ -135,12 +144,14 @@ export default function StandupPage() {
         const targetSprintId = selectedSprint?.id || activeSprint?.id;
         if (targetSprintId) {
             try {
-                const [res, blockersRes] = await Promise.all([
+                const [res, blockersRes, streakRes] = await Promise.all([
                     getSprintDailyStandups(targetSprintId).catch(() => ({ standups: [] })),
-                    getSprintBlockers(targetSprintId, 'OPEN').catch(() => ({ blockers: [] }))
+                    getSprintBlockers(targetSprintId, 'OPEN').catch(() => ({ blockers: [] })),
+                    getMyDailyStreak(targetSprintId).catch(() => null)
                 ]);
                 setStandups(res.standups || []);
                 setOpenBlockerCount(blockersRes.blockers?.length || 0);
+                if (streakRes) setDailyStreak(streakRes);
             } catch (err) {
                 console.error("Lỗi cập nhật sau khi giải quyết blocker:", err);
             }
@@ -181,6 +192,13 @@ export default function StandupPage() {
             </div>
         }>
             <div className="max-w-6xl mx-auto py-6 md:py-8 px-2 md:px-4">
+                {/* Banner Chuỗi Daily Liên Tiếp (Sprint Daily Streak) */}
+                {dailyStreak && (
+                    <div className="max-w-4xl mx-auto mb-6">
+                        <DailyStreakCard streak={dailyStreak} variant="compact" showAction={false} />
+                    </div>
+                )}
+
                 {/* Tab Switcher */}
                 <div className="flex justify-center mb-6 md:mb-10 overflow-x-auto no-scrollbar">
                     <div className="bg-surface-container-low p-1 rounded-[20px] md:rounded-[24px] flex gap-1 shadow-inner border border-outline-variant/5 min-w-fit">

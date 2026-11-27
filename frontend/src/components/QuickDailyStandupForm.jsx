@@ -4,6 +4,7 @@ import {
     updateSprintDailyStandup, 
     checkSprintTodayStandup 
 } from '../services/standupService';
+import { pickRandomFunPrompt } from '../config/daily-prompts.config';
 
 /**
  * QuickDailyStandupForm
@@ -34,6 +35,8 @@ export default function QuickDailyStandupForm({
     const [blocked, setBlocked] = useState(false);
     const [blockerNote, setBlockerNote] = useState('');
     const [mood, setMood] = useState('NORMAL');
+    const [funPromptQuestion, setFunPromptQuestion] = useState(() => pickRandomFunPrompt()?.question || null);
+    const [funPromptAnswer, setFunPromptAnswer] = useState('');
 
     // Form states
     const [errors, setErrors] = useState({});
@@ -76,6 +79,8 @@ export default function QuickDailyStandupForm({
                     setBlocked(Boolean(record.blocked));
                     setBlockerNote(record.blockerNote || '');
                     setMood(record.mood || 'NORMAL');
+                    setFunPromptQuestion(record.funPromptQuestion || null);
+                    setFunPromptAnswer(record.funPromptAnswer || '');
                     setIsEditing(false);
                 } else {
                     // Chưa gửi hôm nay hoặc đã sang ngày mới (AC2)
@@ -86,6 +91,9 @@ export default function QuickDailyStandupForm({
                     setBlocked(false);
                     setBlockerNote('');
                     setMood('NORMAL');
+                    const pickedPrompt = pickRandomFunPrompt();
+                    setFunPromptQuestion(pickedPrompt?.question || null);
+                    setFunPromptAnswer('');
                     setIsEditing(true);
                 }
             })
@@ -99,6 +107,8 @@ export default function QuickDailyStandupForm({
                     setBlocked(Boolean(existingStandup.blocked));
                     setBlockerNote(existingStandup.blockerNote || '');
                     setMood(existingStandup.mood || 'NORMAL');
+                    setFunPromptQuestion(existingStandup.funPromptQuestion || null);
+                    setFunPromptAnswer(existingStandup.funPromptAnswer || '');
                 }
             })
             .finally(() => {
@@ -119,6 +129,8 @@ export default function QuickDailyStandupForm({
             setBlockers(existingStandup.blockers || '');
             setBlocked(Boolean(existingStandup.blocked));
             setBlockerNote(existingStandup.blockerNote || '');
+            setFunPromptQuestion(existingStandup.funPromptQuestion || null);
+            setFunPromptAnswer(existingStandup.funPromptAnswer || '');
         }
     }, [existingStandup]);
 
@@ -195,6 +207,8 @@ export default function QuickDailyStandupForm({
             setBlocked(Boolean(submittedStandup.blocked));
             setBlockerNote(submittedStandup.blockerNote || '');
             setMood(submittedStandup.mood || 'NORMAL');
+            setFunPromptQuestion(submittedStandup.funPromptQuestion || null);
+            setFunPromptAnswer(submittedStandup.funPromptAnswer || '');
         }
         setErrors({});
         setApiError(null);
@@ -210,6 +224,8 @@ export default function QuickDailyStandupForm({
             setBlocked(Boolean(submittedStandup.blocked));
             setBlockerNote(submittedStandup.blockerNote || '');
             setMood(submittedStandup.mood || 'NORMAL');
+            setFunPromptQuestion(submittedStandup.funPromptQuestion || null);
+            setFunPromptAnswer(submittedStandup.funPromptAnswer || '');
         }
         setErrors({});
         setApiError(null);
@@ -244,7 +260,9 @@ export default function QuickDailyStandupForm({
                 blockers: blockers.trim(),
                 mood: mood || 'NORMAL',
                 blocked: Boolean(blocked),
-                blocker_note: blocked ? blockerNote.trim() : null
+                blocker_note: blocked ? blockerNote.trim() : null,
+                fun_prompt_question: funPromptQuestion || null,
+                fun_prompt_answer: funPromptAnswer.trim()
             };
 
             let result;
@@ -522,6 +540,19 @@ export default function QuickDailyStandupForm({
                             {displayBlockers || 'Không có vướng mắc nào.'}
                         </p>
                     </div>
+
+                    {/* 4. Fun Icebreaker Prompt (nếu có trả lời) */}
+                    {submittedStandup.funPromptAnswer && (
+                        <div className="rounded-2xl p-4 md:p-5 border border-dashed border-violet-400/40 bg-violet-500/8">
+                            <div className="flex items-center gap-2 mb-1.5 text-violet-700 dark:text-violet-300 font-bold text-xs">
+                                <span>✨</span>
+                                <span>{submittedStandup.funPromptQuestion || 'Câu hỏi vui hôm nay'}</span>
+                            </div>
+                            <p className="text-sm text-on-surface italic whitespace-pre-wrap leading-relaxed pl-6">
+                                “{submittedStandup.funPromptAnswer}”
+                            </p>
+                        </div>
+                    )}
                 </div>
             </div>
         );
@@ -847,6 +878,35 @@ export default function QuickDailyStandupForm({
                         </div>
                     )}
                 </div>
+
+                {/* ======================================================== */}
+                {/* PHẦN 5: CÂU HỎI PHỤ VUI NHỘN NGẪU NHIÊN (30% CHANCE - OPTIONAL) */}
+                {/* ======================================================== */}
+                {funPromptQuestion && (
+                    <div className="p-4 md:p-5 rounded-2xl border-2 border-dashed border-violet-400/40 bg-gradient-to-br from-violet-500/8 via-fuchsia-500/5 to-sky-500/8 transition-all animate-in fade-in duration-300">
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                            <label
+                                htmlFor="fun_prompt_answer"
+                                className="text-xs md:text-sm font-bold text-violet-900 dark:text-violet-200 flex items-center gap-2"
+                            >
+                                <span className="text-base">☕</span>
+                                <span>{funPromptQuestion}</span>
+                            </label>
+                            <span className="px-2.5 py-0.5 rounded-full bg-violet-500/15 text-violet-700 dark:text-violet-300 text-[10px] font-bold">
+                                ✨ Không bắt buộc
+                            </span>
+                        </div>
+                        <input
+                            id="fun_prompt_answer"
+                            type="text"
+                            value={funPromptAnswer}
+                            onChange={(e) => setFunPromptAnswer(e.target.value)}
+                            onKeyDown={handleKeyDown}
+                            placeholder="Chia sẻ nhanh 1 câu cho vui (bỏ trống cũng gửi bình thường)..."
+                            className="w-full bg-surface-container-lowest/90 border border-violet-300/40 dark:border-violet-500/30 rounded-xl px-4 py-3 text-sm font-medium text-on-surface outline-none focus:border-violet-500 focus:ring-4 focus:ring-violet-500/10 transition-all placeholder:text-on-surface-variant/45 placeholder:font-normal"
+                        />
+                    </div>
+                )}
 
                 {/* Submit button & Shortcut hint */}
                 <div className="pt-2">

@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import MainLayout from '../components/MainLayout';
+import DailyStreakCard from '../components/DailyStreakCard';
 import api, { getUserProfile, updateUserProfile, changePassword, getAvatarUrl } from '../services/api';
+import { getMyDailyStreak } from '../services/standupService';
 import { toast } from 'react-hot-toast';
 
 export default function Settings() {
@@ -30,13 +32,17 @@ export default function Settings() {
   const [avatarPreview, setAvatarPreview] = useState(null);
   
   const [loading, setLoading] = useState(true);
+  const [dailyStreak, setDailyStreak] = useState(null);
   const [submitLoading, setSubmitLoading] = useState(false);
   const [errors, setErrors] = useState({});
 
   useEffect(() => {
     const fetchProfile = async () => {
       try {
-        const res = await getUserProfile();
+        const [res, streakRes] = await Promise.all([
+          getUserProfile(),
+          getMyDailyStreak().catch(() => null)
+        ]);
         const data = res.data;
         setProfileData({
           id: data.id || '',
@@ -44,6 +50,7 @@ export default function Settings() {
           fullName: data.fullName || '',
           avatar: data.avatar || ''
         });
+        setDailyStreak(streakRes || data.dailyStreak || null);
         setInitialName(data.fullName || '');
         if (data.avatar) {
           setAvatarPreview(getAvatarUrl(data.avatar));
@@ -275,6 +282,13 @@ export default function Settings() {
             Quản lý thông tin tài khoản, ảnh đại diện và bảo mật mật khẩu của bạn.
           </p>
         </header>
+
+        {/* Sprint Daily Streak Card trên trang Profile */}
+        {dailyStreak && (
+          <div className="mb-8 px-4 md:px-0">
+            <DailyStreakCard streak={dailyStreak} />
+          </div>
+        )}
 
         {/* Content Box */}
         <div className="bg-white dark:bg-surface-container-low rounded-[2rem] md:rounded-[3rem] shadow-xl shadow-surface-variant/5 border border-outline-variant/10 overflow-hidden">

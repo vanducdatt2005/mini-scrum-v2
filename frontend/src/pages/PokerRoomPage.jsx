@@ -1658,7 +1658,7 @@ export default function PokerRoomPage() {
                   <span>Chọn lá bài Fibonacci {myVote ? `(Đang chọn: ${myVote})` : ''}</span>
                 </div>
                 <p className="text-[11px] text-on-surface-variant/70 mt-0.5">
-                  Lá bài bạn chọn được ẩn hoàn toàn với các thành viên khác cho đến khi Lật bài.
+                  Lá bài bạn chọn được ẩn hoàn toàn cho đến khi Lật bài. Rê chuột vào các lá đặc biệt (☕, 🚀, 🐛, ?) để xem ý nghĩa.
                 </p>
               </div>
 
@@ -1679,63 +1679,46 @@ export default function PokerRoomPage() {
                 const isSpecial = Boolean(SPECIAL_CARDS[card]);
                 const specialInfo = SPECIAL_CARDS[card];
                 return (
-                  <button
-                    key={card}
-                    disabled={isRevealed}
-                    onClick={() => handleSelectCard(card)}
-                    title={isSpecial ? `${specialInfo.label}: ${specialInfo.meaning}` : `Chọn lá ${card} SP`}
-                    className={`w-12 h-16 md:w-14 md:h-20 rounded-2xl flex flex-col items-center justify-center font-black transition-all duration-200 transform ${
-                      isSelected
-                        ? isSpecial
-                          ? 'bg-violet-600 text-white -translate-y-2 shadow-xl ring-4 ring-violet-400/40 scale-105'
-                          : 'bg-primary text-white -translate-y-2 shadow-xl ring-4 ring-primary/30 scale-105'
-                        : isRevealed
-                        ? 'bg-surface-container/40 text-on-surface-variant/40 cursor-not-allowed border border-outline-variant/20'
-                        : isSpecial
-                        ? 'bg-surface-container/90 hover:bg-violet-50 hover:border-violet-300 hover:-translate-y-1 text-on-surface shadow-sm border border-violet-200/60'
-                        : 'bg-surface-container hover:bg-surface-container-high hover:-translate-y-1 text-on-surface shadow-sm border border-outline-variant/20'
-                    }`}
-                  >
-                    <span className={`${isSpecial ? 'text-xl leading-none' : 'text-base md:text-lg font-mono'}`}>{card}</span>
-                    {isSpecial && (
-                      <span className="text-[7px] font-sans font-bold opacity-80 truncate max-w-full px-0.5 mt-0.5">
-                        {specialInfo.label}
+                  <div key={card} className="relative group">
+                    <button
+                      disabled={isRevealed}
+                      onClick={() => handleSelectCard(card)}
+                      aria-label={isSpecial ? specialInfo.label : `Chọn lá ${card} SP`}
+                      className={`w-12 h-16 md:w-14 md:h-20 rounded-2xl flex items-center justify-center font-black transition-all duration-200 transform ${
+                        isSelected
+                          ? isSpecial
+                            ? 'bg-violet-600 text-white -translate-y-2 shadow-xl ring-4 ring-violet-400/40 scale-105'
+                            : 'bg-primary text-white -translate-y-2 shadow-xl ring-4 ring-primary/30 scale-105'
+                          : isRevealed
+                          ? 'bg-surface-container/40 text-on-surface-variant/40 cursor-not-allowed border border-outline-variant/20'
+                          : isSpecial
+                          ? 'bg-surface-container hover:bg-violet-50 hover:border-violet-300 hover:-translate-y-1 text-on-surface shadow-sm border border-violet-200/50'
+                          : 'bg-surface-container hover:bg-surface-container-high hover:-translate-y-1 text-on-surface shadow-sm border border-outline-variant/20'
+                      }`}
+                    >
+                      <span className={`${isSpecial ? 'text-2xl select-none leading-none' : 'text-base md:text-lg font-mono'}`}>
+                        {card}
                       </span>
+                    </button>
+
+                    {/* Tooltip hiển thị ý nghĩa khi di chuyển chuột vào lá bài đặc biệt */}
+                    {isSpecial && (
+                      <div className="hidden group-hover:block absolute bottom-full mb-2 left-1/2 -translate-x-1/2 z-50 w-60 p-3 bg-slate-900/95 backdrop-blur-md text-white text-[11px] rounded-2xl shadow-2xl pointer-events-none text-left border border-white/10 animate-in fade-in zoom-in-95 duration-150">
+                        <div className="flex items-center gap-1.5 font-bold mb-1 text-amber-300">
+                          <span className="text-base">{specialInfo.icon}</span>
+                          <span className="text-xs">{specialInfo.label}</span>
+                        </div>
+                        <p className="text-slate-200 text-[10px] leading-relaxed font-normal mb-1.5">
+                          {specialInfo.meaning}
+                        </p>
+                        <div className="text-[9px] text-slate-400 border-t border-white/10 pt-1 italic font-normal">
+                          * Không tính vào điểm trung vị (Median)
+                        </div>
+                      </div>
                     )}
-                  </button>
+                  </div>
                 );
               })}
-            </div>
-
-            {/* US-038 AC2: BẢNG GIẢI THÍCH CHI TIẾT Ý NGHĨA CÁC LÁ ĐẶC BIỆT (MODE VUI & TÍN HIỆU THỰC TẾ) */}
-            <div className="mt-5 pt-4 border-t border-outline-variant/20">
-              <div className="text-[10px] font-black uppercase tracking-wider text-outline mb-2.5 flex items-center gap-1.5">
-                <span className="material-symbols-outlined text-xs text-primary">psychology_alt</span>
-                <span>Ý nghĩa các lá đặc biệt (Mode vui &amp; Tín hiệu thực tế)</span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
-                {Object.entries(SPECIAL_CARDS).map(([symbol, card]) => (
-                  <div
-                    key={symbol}
-                    className="p-2.5 rounded-xl bg-surface-container/50 border border-outline-variant/20 flex items-start gap-2.5"
-                  >
-                    <span className="text-xl shrink-0 p-1.5 bg-surface rounded-lg border border-outline-variant/30 shadow-2xs">
-                      {card.icon}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-bold text-on-surface">{card.label}</span>
-                        <span className={`text-[9px] font-semibold px-1.5 py-0.2 rounded-full border ${card.badgeClass}`}>
-                          {card.shortDesc}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-on-surface-variant mt-0.5 leading-snug">
-                        {card.meaning}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
             </div>
           </div>
         </div>

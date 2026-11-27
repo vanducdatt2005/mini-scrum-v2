@@ -5,8 +5,40 @@ import { getSocket } from '../context/SocketContext';
 import { getPokerRoom, closePokerRoom, savePokerEstimate, finalizePokerEstimate, getAvatarUrl } from '../services/api';
 import { toast } from 'react-hot-toast';
 
-// Bộ bài Planning Poker chuẩn Fibonacci theo yêu cầu US-034
-const POKER_CARDS = ['0', '1', '2', '3', '5', '8', '13', '20', '?', '☕'];
+// US-038: Bộ định nghĩa lá đặc biệt (Mode vui & Tín hiệu thực tế)
+export const SPECIAL_CARDS = {
+  '☕': {
+    icon: '☕',
+    label: 'Cần cafe',
+    shortDesc: 'Cần cafe / Nghỉ giải lao',
+    meaning: 'Cần cafe / Nghỉ giải lao: Thành viên thấy mệt hoặc phiên thảo luận kéo dài, cần nghỉ ngơi một chút trước khi tiếp tục estimate.',
+    badgeClass: 'bg-amber-100 text-amber-800 border-amber-300'
+  },
+  '🚀': {
+    icon: '🚀',
+    label: 'Quá lớn phải tách',
+    shortDesc: 'Quá lớn, nên tách US',
+    meaning: 'Quá lớn phải tách (Too large): User Story này phạm vi quá rộng hoặc quá phức tạp, vượt quá ngưỡng an toàn cho 1 Sprint. Kiến nghị phân rã thành các User Story nhỏ hơn.',
+    badgeClass: 'bg-violet-100 text-violet-800 border-violet-300'
+  },
+  '🐛': {
+    icon: '🐛',
+    label: 'Còn bug / ẩn ý',
+    shortDesc: 'Tiềm ẩn bug / rủi ro kỹ thuật',
+    meaning: 'Còn bug / ẩn ý: Story có nhiều rủi ro kỹ thuật, logic chưa rõ ràng, nợ công nghệ (tech debt) hoặc tiềm ẩn lỗi phát sinh cần làm rõ thêm.',
+    badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-300'
+  },
+  '?': {
+    icon: '?',
+    label: 'Chưa rõ yêu cầu',
+    shortDesc: 'Chưa rõ yêu cầu, cần PO giải thích',
+    meaning: 'Chưa rõ yêu cầu: Thiếu thông tin hoặc Acceptance Criteria chưa đủ rõ để đưa ra con số ước lượng chính xác.',
+    badgeClass: 'bg-slate-100 text-slate-800 border-slate-300'
+  }
+};
+
+// Bộ bài Planning Poker Fibonacci chuẩn + Các lá đặc biệt (US-034 & US-038)
+const POKER_CARDS = ['0', '1', '2', '3', '5', '8', '13', '20', '☕', '🚀', '🐛', '?'];
 
 export default function PokerRoomPage() {
   const { roomCode } = useParams();
@@ -366,7 +398,9 @@ export default function PokerRoomPage() {
   const statistics = useMemo(() => {
     if (!isRevealed || members.length === 0) return null;
 
-    // Lọc các vote dạng số hợp lệ
+    const totalVotedCount = members.filter(m => m.hasVoted).length;
+
+    // Lọc các vote dạng số hợp lệ (loại bỏ hoàn toàn các lá đặc biệt khỏi tính toán)
     const numericEntries = members
       .filter(m => m.hasVoted && m.vote !== null && m.vote !== undefined && !isNaN(parseFloat(m.vote)))
       .map(m => ({
@@ -376,15 +410,28 @@ export default function PokerRoomPage() {
         val: parseFloat(m.vote)
       }));
 
-    // Lọc các vote đặc biệt (? hoặc ☕)
+    // Lọc các vote lá đặc biệt (US-038 AC1: ☕, 🚀, 🐛, ?)
     const specialVotes = members
-      .filter(m => m.hasVoted && (m.vote === '?' || m.vote === '☕'))
-      .map(m => ({ userId: m.userId, fullName: m.fullName || 'Thành viên', avatar: m.avatar, vote: m.vote }));
+      .filter(m => m.hasVoted && m.vote && SPECIAL_CARDS[m.vote])
+      .map(m => ({
+        userId: m.userId,
+        fullName: m.fullName || 'Thành viên',
+        avatar: m.avatar,
+        vote: m.vote,
+        info: SPECIAL_CARDS[m.vote]
+      }));
+
+    // US-038 AC2: Thống kê số lượng lá Rocket 🚀 (Quá lớn phải tách)
+    const rocketVotes = members.filter(m => m.hasVoted && m.vote === '🚀');
+    const rocketCount = rocketVotes.length;
+    const rocketPercentage = totalVotedCount > 0 ? Math.round((rocketCount / totalVotedCount) * 100) : 0;
+    const shouldSplitStory = totalVotedCount > 0 && (rocketCount / totalVotedCount) >= 0.5;
 
     if (numericEntries.length === 0) {
       return {
         hasNumeric: false,
-        count: members.filter(m => m.hasVoted).length,
+        totalVotedCount,
+        count: totalVotedCount,
         average: 'N/A',
         consensus: specialVotes.length > 0 ? specialVotes[0].vote : 'N/A',
         median: 'N/A',
@@ -396,7 +443,10 @@ export default function PokerRoomPage() {
         minVoters: [],
         highestVoter: null,
         lowestVoter: null,
-        specialVotes
+        specialVotes,
+        rocketCount,
+        rocketPercentage,
+        shouldSplitStory
       };
     }
 
@@ -404,7 +454,7 @@ export default function PokerRoomPage() {
     const sum = values.reduce((acc, curr) => acc + curr, 0);
     const avg = (sum / values.length).toFixed(1);
 
-    // US-037: Tính Trung vị (Median)
+    // US-037: Tính Trung vị (Median) - US-038 AC1: Không tính lá đặc biệt vào trung vị
     const sortedValues = [...values].sort((a, b) => a - b);
     const midIndex = Math.floor(sortedValues.length / 2);
     let median;
@@ -443,10 +493,11 @@ export default function PokerRoomPage() {
 
     return {
       hasNumeric: true,
+      totalVotedCount,
       count: values.length,
       average: avg,
       consensus: mode,
-      median, // US-037: Trung vị
+      median, // US-037 & US-038: Trung vị chỉ tính từ lá số
       max,
       min,
       diff, // max - min
@@ -455,7 +506,10 @@ export default function PokerRoomPage() {
       minVoters,
       highestVoter, // 1 người vote cao nhất
       lowestVoter,  // 1 người vote thấp nhất
-      specialVotes
+      specialVotes,
+      rocketCount,
+      rocketPercentage,
+      shouldSplitStory
     };
   }, [isRevealed, members]);
 
@@ -781,6 +835,39 @@ export default function PokerRoomPage() {
                   <div className="text-xl font-black text-amber-600 mt-0.5">{statistics.average}</div>
                 </div>
               </div>
+
+              {/* US-038 AC1: KHỐI TÍN HIỆU LÁ ĐẶC BIỆT (KHÔNG TÍNH VÀO TRUNG VỊ SỐ) */}
+              {statistics.specialVotes && statistics.specialVotes.length > 0 && (
+                <div className="mb-4 p-3.5 rounded-2xl bg-surface-container/60 border border-outline-variant/30">
+                  <div className="text-[10px] font-black uppercase tracking-wider text-outline mb-2.5 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 text-primary">
+                      <span className="material-symbols-outlined text-sm">mood</span>
+                      <span>Tín hiệu lá đặc biệt ({statistics.specialVotes.length})</span>
+                    </span>
+                    <span className="text-[9px] font-semibold text-on-surface-variant italic">
+                      * Không tính vào trung vị số
+                    </span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {statistics.specialVotes.map((sv, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between gap-2 text-xs bg-surface p-2 rounded-xl border border-outline-variant/20 shadow-2xs"
+                        title={sv.info.meaning}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-lg leading-none">{sv.vote}</span>
+                          <span className="font-bold text-on-surface truncate">{sv.fullName}:</span>
+                          <span className="text-on-surface-variant text-[11px] truncate">{sv.info.label}</span>
+                        </div>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${sv.info.badgeClass}`}>
+                          {sv.info.shortDesc}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* KHU VỰC CHỐT STORY POINTS VÀO BACKLOG (DÀNH CHO PRODUCT OWNER / SM) - US-037 AC1 & AC2 */}
               {isModerator && (
@@ -1118,6 +1205,36 @@ export default function PokerRoomPage() {
               </div>
             )}
 
+            {/* US-038 AC2: GỢI Ý "NÊN TÁCH US" KHI >= 50% VOTE 🚀 (QUÁ LỚN PHẢI TÁCH) */}
+            {isRevealed && statistics?.shouldSplitStory && (
+              <div className="mb-6 p-4 md:p-5 rounded-2xl bg-gradient-to-r from-violet-500/15 via-purple-500/15 to-violet-500/15 border-2 border-violet-500/50 shadow-md animate-in slide-in-from-top-3 duration-300">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <div className="w-11 h-11 rounded-2xl bg-violet-600 text-white flex items-center justify-center font-bold text-2xl shadow-sm shrink-0">
+                      🚀
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="text-sm font-black text-on-surface">
+                          Gợi ý từ kết quả Poker: &quot;Nên tách User Story này&quot;
+                        </h4>
+                        <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-violet-600 text-white shadow-xs">
+                          {statistics.rocketPercentage}% vote 🚀 ({statistics.rocketCount}/{statistics.totalVotedCount} thành viên)
+                        </span>
+                      </div>
+                      <p className="text-xs text-on-surface-variant mt-1.5 leading-relaxed font-medium">
+                        Có từ 50% thành viên nhóm trở lên nhận định User Story này <strong className="text-violet-700">quá lớn hoặc quá phức tạp</strong> để cam kết hoàn thành an toàn trong một Sprint. Khuyến nghị Product Owner &amp; Scrum Master thảo luận phân rã (split) story thành các phần việc nhỏ hơn.
+                      </p>
+                      <div className="mt-2.5 flex items-center gap-2 text-[11px] font-semibold text-violet-900 bg-violet-100/80 px-3 py-1.5 rounded-xl border border-violet-200">
+                        <span className="material-symbols-outlined text-sm text-violet-700">tips_and_updates</span>
+                        <span>Khuyến nghị: Đây là tín hiệu tham khảo để nhóm thảo luận làm rõ hoặc phân rã story (chỉ text gợi ý, không tự động tách User Story).</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-primary text-xl">group</span>
@@ -1387,51 +1504,98 @@ export default function PokerRoomPage() {
                     {/* Lá bài úp hoặc lật */}
                     <div className="w-14 h-20 mb-3 rounded-xl flex items-center justify-center font-black text-xl shadow-md transition-transform duration-300 transform perspective-500 relative">
                       {isRevealed ? (
-                        /* Đã lật bài: Tất cả mọi người thấy số điểm (AC1) */
-                        <div className={`w-full h-full rounded-xl bg-white border-2 flex flex-col items-center justify-center font-mono animate-in zoom-in-75 shadow-sm relative ${
-                          isSpeedTalkHigh
-                            ? 'border-rose-600 text-rose-700 bg-rose-50 shadow-md ring-2 ring-rose-400'
-                            : isSpeedTalkLow
-                            ? 'border-blue-600 text-blue-700 bg-blue-50 shadow-md ring-2 ring-blue-400'
-                            : isMax 
-                            ? 'border-rose-500 text-rose-700 bg-rose-50/20' 
-                            : isMin 
-                            ? 'border-blue-500 text-blue-700 bg-blue-50/20' 
-                            : 'border-primary text-primary'
-                        }`}>
-                          {/* Huy hiệu cao nhất / thấp nhất (AC1) */}
-                          {isSpeedTalkHigh ? (
-                            <span className="absolute -top-2.5 px-1.5 py-0.5 bg-rose-600 text-white text-[8px] font-sans font-bold uppercase tracking-wider rounded-full shadow-sm flex items-center gap-0.5 whitespace-nowrap">
-                              <span className="material-symbols-outlined text-[10px]">campaign</span>
-                              <span>Nói nhanh (Max)</span>
+                        /* Đã lật bài: Tất cả mọi người thấy số điểm hoặc lá đặc biệt (AC1) */
+                        SPECIAL_CARDS[member.vote] ? (
+                          /* US-038 AC1: Lá bài đặc biệt có icon + tooltip nghĩa */
+                          <div 
+                            className={`w-full h-full rounded-xl bg-white border-2 flex flex-col items-center justify-center animate-in zoom-in-75 shadow-sm relative group cursor-help transition-all hover:scale-105 ${
+                              member.vote === '🚀'
+                                ? 'border-violet-500 bg-violet-50/40 text-violet-700'
+                                : member.vote === '☕'
+                                ? 'border-amber-500 bg-amber-50/40 text-amber-700'
+                                : member.vote === '🐛'
+                                ? 'border-emerald-500 bg-emerald-50/40 text-emerald-700'
+                                : 'border-slate-400 bg-slate-50/40 text-slate-700'
+                            }`}
+                            title={`${SPECIAL_CARDS[member.vote].label}: ${SPECIAL_CARDS[member.vote].meaning}`}
+                          >
+                            <span className="text-2xl leading-none select-none">{SPECIAL_CARDS[member.vote].icon}</span>
+                            <span className="text-[8px] font-sans font-bold mt-1 text-center px-1 truncate w-full text-on-surface">
+                              {SPECIAL_CARDS[member.vote].label}
                             </span>
-                          ) : isSpeedTalkLow ? (
-                            <span className="absolute -top-2.5 px-1.5 py-0.5 bg-blue-600 text-white text-[8px] font-sans font-bold uppercase tracking-wider rounded-full shadow-sm flex items-center gap-0.5 whitespace-nowrap">
-                              <span className="material-symbols-outlined text-[10px]">campaign</span>
-                              <span>Nói nhanh (Min)</span>
+                            {/* Floating tooltip hiển thị chi tiết ý nghĩa lá đặc biệt (AC1) */}
+                            <div className="hidden group-hover:block absolute bottom-full mb-2 left-1/2 -translate-x-1/2 z-40 w-52 p-2.5 bg-slate-900/95 backdrop-blur-xs text-white text-[11px] rounded-xl shadow-2xl pointer-events-none text-left border border-white/10 animate-in fade-in zoom-in-95 duration-150">
+                              <div className="font-bold flex items-center gap-1.5 mb-1 text-amber-300">
+                                <span className="text-sm">{SPECIAL_CARDS[member.vote].icon}</span>
+                                <span>{SPECIAL_CARDS[member.vote].label}</span>
+                              </div>
+                              <div className="text-slate-200 text-[10px] leading-snug">
+                                {SPECIAL_CARDS[member.vote].meaning}
+                              </div>
+                              <div className="mt-1 text-[9px] text-slate-400 border-t border-white/10 pt-1 italic">
+                                * Không tính vào trung vị số
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          /* Lá số Fibonacci bình thường */
+                          <div className={`w-full h-full rounded-xl bg-white border-2 flex flex-col items-center justify-center font-mono animate-in zoom-in-75 shadow-sm relative ${
+                            isSpeedTalkHigh
+                              ? 'border-rose-600 text-rose-700 bg-rose-50 shadow-md ring-2 ring-rose-400'
+                              : isSpeedTalkLow
+                              ? 'border-blue-600 text-blue-700 bg-blue-50 shadow-md ring-2 ring-blue-400'
+                              : isMax 
+                              ? 'border-rose-500 text-rose-700 bg-rose-50/20' 
+                              : isMin 
+                              ? 'border-blue-500 text-blue-700 bg-blue-50/20' 
+                              : 'border-primary text-primary'
+                          }`}>
+                            {/* Huy hiệu cao nhất / thấp nhất (AC1) */}
+                            {isSpeedTalkHigh ? (
+                              <span className="absolute -top-2.5 px-1.5 py-0.5 bg-rose-600 text-white text-[8px] font-sans font-bold uppercase tracking-wider rounded-full shadow-sm flex items-center gap-0.5 whitespace-nowrap">
+                                <span className="material-symbols-outlined text-[10px]">campaign</span>
+                                <span>Nói nhanh (Max)</span>
+                              </span>
+                            ) : isSpeedTalkLow ? (
+                              <span className="absolute -top-2.5 px-1.5 py-0.5 bg-blue-600 text-white text-[8px] font-sans font-bold uppercase tracking-wider rounded-full shadow-sm flex items-center gap-0.5 whitespace-nowrap">
+                                <span className="material-symbols-outlined text-[10px]">campaign</span>
+                                <span>Nói nhanh (Min)</span>
+                              </span>
+                            ) : isMax ? (
+                              <span className="absolute -top-2 px-1.5 py-0.2 bg-rose-600 text-white text-[7px] font-sans font-bold uppercase tracking-wider rounded-full shadow-sm">
+                                Max
+                              </span>
+                            ) : isMin ? (
+                              <span className="absolute -top-2 px-1.5 py-0.2 bg-blue-600 text-white text-[7px] font-sans font-bold uppercase tracking-wider rounded-full shadow-sm">
+                                Min
+                              </span>
+                            ) : null}
+                            <span className="text-xl font-black">
+                              {member.vote !== null && member.vote !== undefined ? member.vote : '-'}
                             </span>
-                          ) : isMax ? (
-                            <span className="absolute -top-2 px-1.5 py-0.2 bg-rose-600 text-white text-[7px] font-sans font-bold uppercase tracking-wider rounded-full shadow-sm">
-                              Max
-                            </span>
-                          ) : isMin ? (
-                            <span className="absolute -top-2 px-1.5 py-0.2 bg-blue-600 text-white text-[7px] font-sans font-bold uppercase tracking-wider rounded-full shadow-sm">
-                              Min
-                            </span>
-                          ) : null}
-                          <span className="text-xl font-black">
-                            {member.vote !== null && member.vote !== undefined ? member.vote : '-'}
-                          </span>
-                        </div>
+                          </div>
+                        )
                       ) : isMe && myVote ? (
                         /* AC1: Chưa lật bài nhưng là CHÍNH MÌNH -> Chỉ mình thấy lá đã chọn */
-                        <div 
-                          className="w-full h-full rounded-xl bg-white text-purple-700 border-2 border-purple-500 shadow-md flex flex-col items-center justify-center font-mono relative animate-in zoom-in-90 ring-2 ring-purple-500/20"
-                          title="Lá bài bạn đã chọn (đang ẩn với tất cả thành viên khác)"
-                        >
-                          <span className="text-xl font-black">{myVote}</span>
-                          <span className="text-[7px] font-sans font-bold text-purple-600 tracking-tighter uppercase mt-0.5">Lá của bạn</span>
-                        </div>
+                        SPECIAL_CARDS[myVote] ? (
+                          <div 
+                            className="w-full h-full rounded-xl bg-white text-violet-700 border-2 border-violet-500 shadow-md flex flex-col items-center justify-center relative animate-in zoom-in-90 ring-2 ring-violet-500/20"
+                            title={`Lá bạn đã chọn: ${SPECIAL_CARDS[myVote].label} (đang ẩn với mọi người)`}
+                          >
+                            <span className="text-2xl leading-none select-none">{SPECIAL_CARDS[myVote].icon}</span>
+                            <span className="text-[7px] font-sans font-bold text-violet-600 tracking-tighter uppercase mt-0.5 truncate px-1">
+                              {SPECIAL_CARDS[myVote].label}
+                            </span>
+                          </div>
+                        ) : (
+                          <div 
+                            className="w-full h-full rounded-xl bg-white text-purple-700 border-2 border-purple-500 shadow-md flex flex-col items-center justify-center font-mono relative animate-in zoom-in-90 ring-2 ring-purple-500/20"
+                            title="Lá bài bạn đã chọn (đang ẩn với tất cả thành viên khác)"
+                          >
+                            <span className="text-xl font-black">{myVote}</span>
+                            <span className="text-[7px] font-sans font-bold text-purple-600 tracking-tighter uppercase mt-0.5">Lá của bạn</span>
+                          </div>
+                        )
                       ) : member.hasVoted ? (
                         /* AC1: Chưa lật bài & là NGƯỜI KHÁC -> Chỉ thấy lá bài úp bí mật, không thấy số */
                         <div 
@@ -1512,23 +1676,66 @@ export default function PokerRoomPage() {
             <div className="flex flex-wrap gap-2.5 justify-center md:justify-start">
               {POKER_CARDS.map((card) => {
                 const isSelected = myVote === card;
+                const isSpecial = Boolean(SPECIAL_CARDS[card]);
+                const specialInfo = SPECIAL_CARDS[card];
                 return (
                   <button
                     key={card}
                     disabled={isRevealed}
                     onClick={() => handleSelectCard(card)}
-                    className={`w-12 h-16 md:w-14 md:h-20 rounded-2xl flex items-center justify-center font-black font-mono text-base md:text-lg transition-all duration-200 transform ${
+                    title={isSpecial ? `${specialInfo.label}: ${specialInfo.meaning}` : `Chọn lá ${card} SP`}
+                    className={`w-12 h-16 md:w-14 md:h-20 rounded-2xl flex flex-col items-center justify-center font-black transition-all duration-200 transform ${
                       isSelected
-                        ? 'bg-primary text-white -translate-y-2 shadow-xl ring-4 ring-primary/30 scale-105'
+                        ? isSpecial
+                          ? 'bg-violet-600 text-white -translate-y-2 shadow-xl ring-4 ring-violet-400/40 scale-105'
+                          : 'bg-primary text-white -translate-y-2 shadow-xl ring-4 ring-primary/30 scale-105'
                         : isRevealed
                         ? 'bg-surface-container/40 text-on-surface-variant/40 cursor-not-allowed border border-outline-variant/20'
+                        : isSpecial
+                        ? 'bg-surface-container/90 hover:bg-violet-50 hover:border-violet-300 hover:-translate-y-1 text-on-surface shadow-sm border border-violet-200/60'
                         : 'bg-surface-container hover:bg-surface-container-high hover:-translate-y-1 text-on-surface shadow-sm border border-outline-variant/20'
                     }`}
                   >
-                    {card}
+                    <span className={`${isSpecial ? 'text-xl leading-none' : 'text-base md:text-lg font-mono'}`}>{card}</span>
+                    {isSpecial && (
+                      <span className="text-[7px] font-sans font-bold opacity-80 truncate max-w-full px-0.5 mt-0.5">
+                        {specialInfo.label}
+                      </span>
+                    )}
                   </button>
                 );
               })}
+            </div>
+
+            {/* US-038 AC2: BẢNG GIẢI THÍCH CHI TIẾT Ý NGHĨA CÁC LÁ ĐẶC BIỆT (MODE VUI & TÍN HIỆU THỰC TẾ) */}
+            <div className="mt-5 pt-4 border-t border-outline-variant/20">
+              <div className="text-[10px] font-black uppercase tracking-wider text-outline mb-2.5 flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-xs text-primary">psychology_alt</span>
+                <span>Ý nghĩa các lá đặc biệt (Mode vui &amp; Tín hiệu thực tế)</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                {Object.entries(SPECIAL_CARDS).map(([symbol, card]) => (
+                  <div
+                    key={symbol}
+                    className="p-2.5 rounded-xl bg-surface-container/50 border border-outline-variant/20 flex items-start gap-2.5"
+                  >
+                    <span className="text-xl shrink-0 p-1.5 bg-surface rounded-lg border border-outline-variant/30 shadow-2xs">
+                      {card.icon}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold text-on-surface">{card.label}</span>
+                        <span className={`text-[9px] font-semibold px-1.5 py-0.2 rounded-full border ${card.badgeClass}`}>
+                          {card.shortDesc}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-on-surface-variant mt-0.5 leading-snug">
+                        {card.meaning}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>

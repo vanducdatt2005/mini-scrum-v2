@@ -13,6 +13,7 @@ import api, {
   updateRetroNote,
   deleteRetroNote,
   voteRetroNote,
+  convertRetroNote,
   updateRetroSession,
   getSprintsByProject,
   getAvatarUrl,
@@ -117,6 +118,11 @@ export default function RetroPage() {
   // Vai trò trong dự án (SCRUM-76: ẩn nút Đóng buổi với thành viên thường)
   const [myProjectRole, setMyProjectRole] = useState(null);
 
+  // State chuyển Action Item thành User Story (SCRUM-77)
+  const [convertingNote, setConvertingNote] = useState(null);
+  const [convertTargetSprintId, setConvertTargetSprintId] = useState('');
+  const [convertingSubmit, setConvertingSubmit] = useState(false);
+
   // Tải danh sách buổi khi mở trang
   useEffect(() => {
     if (projectId) {
@@ -219,11 +225,17 @@ export default function RetroPage() {
           ? incoming.voteCount
           : (existingNote ? existingNote.voteCount || 0 : 0);
 
+      const convertedStory =
+        incoming.convertedStory !== undefined
+          ? incoming.convertedStory
+          : (existingNote ? existingNote.convertedStory || null : null);
+
       const mergedNote = {
         ...incoming,
         isMine,
         myVoted,
         voteCount,
+        convertedStory,
       };
 
       const nextState = {};
@@ -325,6 +337,33 @@ export default function RetroPage() {
       });
     };
 
+    const handleNoteConverted = (data) => {
+      const noteId = data?.noteId;
+      const story = data?.story;
+      if (!noteId || !story) return;
+
+      setColumnsData((prev) => {
+        const nextState = {};
+        let changed = false;
+        for (const colKey of Object.keys(prev)) {
+          const list = prev[colKey];
+          const idx = list.findIndex((n) => n.id === noteId);
+          if (idx >= 0) {
+            changed = true;
+            const updatedList = [...list];
+            updatedList[idx] = {
+              ...updatedList[idx],
+              convertedStory: story,
+            };
+            nextState[colKey] = updatedList;
+          } else {
+            nextState[colKey] = list;
+          }
+        }
+        return changed ? nextState : prev;
+      });
+    };
+
     const handleReconnect = () => {
       if (activeSessionRef.current?.id) {
         getRetroDetails(activeSessionRef.current.id)
@@ -346,6 +385,7 @@ export default function RetroPage() {
     socket.on('RETRO_NOTE_UPDATED', handleUpdated);
     socket.on('RETRO_NOTE_DELETED', handleDeleted);
     socket.on('RETRO_NOTE_VOTED', handleNoteVoted);
+    socket.on('RETRO_NOTE_CONVERTED', handleNoteConverted);
     socket.on('connect', handleReconnect);
     const offReconnect = onSocketReconnect(handleReconnect);
 
@@ -354,6 +394,7 @@ export default function RetroPage() {
       socket.off('RETRO_NOTE_UPDATED', handleUpdated);
       socket.off('RETRO_NOTE_DELETED', handleDeleted);
       socket.off('RETRO_NOTE_VOTED', handleNoteVoted);
+      socket.off('RETRO_NOTE_CONVERTED', handleNoteConverted);
       socket.off('connect', handleReconnect);
       offReconnect();
     };
@@ -629,6 +670,52 @@ export default function RetroPage() {
       toast.error(err.response?.data?.error || 'Không thể bình chọn ghi chú');
     } finally {
       setVotingNoteId(null);
+    }
+  };
+
+  // Mở hộp chọn Sprint đích để chuyển Action Item thành User Story (SCRUM-77)
+  const openConvertModal = (note) => {
+    const activeSprints = sprints.filter((sp) => sp.status !== 'COMPLETED');
+    setConvertingNote(note);
+    setConvertTargetSprintId(activeSprints[0]?.id || '');
+    loadSprints();
+  };
+
+  const handleConfirmConvert = async (e) => {
+    e.preventDefault();
+    if (!activeSession || !convertingNote) return;
+    if (!convertTargetSprintId) {
+      toast.error('Vui lòng chọn Sprint đích');
+      return;
+    }
+
+    setConvertingSubmit(true);
+    try {
+      const res = await convertRetroNote(activeSession.id, convertingNote.id, {
+        sprintId: convertTargetSprintId,
+      });
+      const story = res.data?.story;
+      if (story) {
+        setColumnsData((prev) => ({
+          ...prev,
+          [convertingNote.column]: (prev[convertingNote.column] || []).map((n) =>
+            n.id === convertingNote.id
+              ? { ...n, convertedStory: { id: story.id, title: story.title } }
+              : n
+          ),
+        }));
+      }
+      if (res.data?.alreadyConverted) {
+        toast.success('Action Item này đã được chuyển trước đó');
+      } else {
+        toast.success('Đã chuyển Action Item thành User Story');
+      }
+      setConvertingNote(null);
+      setConvertTargetSprintId('');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Không thể chuyển Action Item');
+    } finally {
+      setConvertingSubmit(false);
     }
   };
 
@@ -908,6 +995,43 @@ export default function RetroPage() {
                                 </p>
                               )}
 
+                              {/* Nhãn Đã chuyển hoặc nút Chuyển thành Task (SCRUM-77) */}
+                              {note.column === 'ACTION_ITEM' &&
+                                (note.convertedStory ? (
+                                  <div className="mt-2.5 flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-xs">
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                      <span className="material-symbols-outlined text-[15px] shrink-0">task_alt</span>
+                                      <span className="font-semibold shrink-0">Đã chuyển:</span>
+                                      <span className="truncate" title={note.convertedStory.title}>
+                                        {note.convertedStory.title}
+                                      </span>
+                                    </div>
+                                    {(myProjectRole === 'PO' || myProjectRole === 'SM') && (
+                                      <button
+                                        type="button"
+                                        disabled
+                                        className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[11px] font-medium cursor-not-allowed opacity-70 shrink-0"
+                                      >
+                                        Đã chuyển
+                                      </button>
+                                    )}
+                                  </div>
+                                ) : (
+                                  (myProjectRole === 'PO' || myProjectRole === 'SM') &&
+                                  (note.voteCount || 0) >= 1 && (
+                                    <div className="mt-2.5 flex justify-end">
+                                      <button
+                                        type="button"
+                                        onClick={() => openConvertModal(note)}
+                                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-xs font-medium transition-colors shadow-xs"
+                                      >
+                                        <span className="material-symbols-outlined text-[14px]">drive_file_move</span>
+                                        <span>Chuyển thành Task</span>
+                                      </button>
+                                    </div>
+                                  )
+                                ))}
+
                               <div className="mt-3 pt-2 border-t border-black/5 dark:border-white/5 flex items-center justify-between text-[11px] text-on-surface-variant opacity-80">
                                 <div className="flex items-center gap-1.5">
                                   {note.isAnonymous ? (
@@ -1073,6 +1197,87 @@ export default function RetroPage() {
                     className="px-4 py-2 text-sm bg-primary text-on-primary rounded-xl font-medium hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50"
                   >
                     {creating ? 'Đang tạo...' : 'Tạo buổi'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal Chọn Sprint đích để chuyển Action Item (SCRUM-77) */}
+        {convertingNote && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+            <div className="bg-surface-container-low rounded-2xl max-w-md w-full border border-outline-variant/15 p-6 shadow-xl space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-['Manrope'] font-bold text-lg text-on-surface">
+                  Chuyển Action Item thành User Story
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConvertingNote(null);
+                    setConvertTargetSprintId('');
+                  }}
+                  className="p-1 rounded-full text-on-surface-variant hover:bg-surface-container-high transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[20px]">close</span>
+                </button>
+              </div>
+
+              <div className="p-3 rounded-xl bg-surface border border-outline-variant/15 text-xs text-on-surface-variant">
+                <span className="font-semibold text-on-surface block mb-1">Nội dung Action Item:</span>
+                <p className="line-clamp-3">{convertingNote.content}</p>
+              </div>
+
+              <form onSubmit={handleConfirmConvert} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-on-surface-variant mb-1">
+                    Sprint đích <span className="text-red-500">*</span>
+                  </label>
+                  {sprints.filter((sp) => sp.status !== 'COMPLETED').length === 0 ? (
+                    <p className="text-xs text-red-500 py-2">
+                      Không có Sprint nào chưa kết thúc trong dự án này.
+                    </p>
+                  ) : (
+                    <select
+                      value={convertTargetSprintId}
+                      onChange={(e) => setConvertTargetSprintId(e.target.value)}
+                      className="w-full text-sm px-3.5 py-2.5 rounded-xl border border-outline-variant/20 bg-surface text-on-surface outline-none focus:border-primary"
+                      required
+                    >
+                      <option value="">-- Chọn Sprint đích --</option>
+                      {sprints
+                        .filter((sp) => sp.status !== 'COMPLETED')
+                        .map((sp) => (
+                          <option key={sp.id} value={sp.id}>
+                            {sp.name} ({sp.status === 'ACTIVE' ? 'Đang chạy' : 'Kế hoạch'})
+                          </option>
+                        ))}
+                    </select>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConvertingNote(null);
+                      setConvertTargetSprintId('');
+                    }}
+                    className="px-4 py-2 text-sm text-on-surface-variant hover:bg-surface-container-high rounded-xl transition-colors font-medium"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={
+                      convertingSubmit ||
+                      !convertTargetSprintId ||
+                      sprints.filter((sp) => sp.status !== 'COMPLETED').length === 0
+                    }
+                    className="px-4 py-2 text-sm bg-primary text-on-primary rounded-xl font-medium hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50"
+                  >
+                    {convertingSubmit ? 'Đang chuyển...' : 'Xác nhận chuyển'}
                   </button>
                 </div>
               </form>

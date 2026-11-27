@@ -155,5 +155,6 @@ export const updateRetroNote = (retroId, noteId, data) => api.patch(`/retros/${r
 export const deleteRetroNote = (retroId, noteId) => api.delete(`/retros/${retroId}/notes/${noteId}`);
 export const updateRetroSession = (retroId, data) => api.patch(`/retros/${retroId}`, data);
 export const voteRetroNote = (retroId, noteId) => api.post(`/retros/${retroId}/notes/${noteId}/vote`);
+export const convertRetroNote = (retroId, noteId, data) => api.post(`/retros/${retroId}/notes/${noteId}/convert`, data);
 
 export default api;

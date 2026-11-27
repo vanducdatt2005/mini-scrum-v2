@@ -100,6 +100,8 @@ model UserStory {
   statusHistory UserStoryStatusHistory[]
   priorityOrder Int @default(0)
   pokerRooms    PokerRoom[]
+  sourceRetroNoteId String?    @unique
+  sourceRetroNote   RetroNote? @relation("RetroNoteToStory", fields: [sourceRetroNoteId], references: [id], onDelete: SetNull)
 }
 
 model UserStoryStatusHistory {
@@ -381,6 +383,7 @@ model RetroNote {
   session     RetroSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   author      User         @relation("AuthoredRetroNotes", fields: [authorId], references: [id])
   votes       RetroVote[]
+  convertedStory UserStory? @relation("RetroNoteToStory")
 
   @@index([sessionId])
 }

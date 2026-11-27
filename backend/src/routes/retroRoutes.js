@@ -63,6 +63,9 @@ function serializeRetroNote(note, currentUserId = null) {
     isAnonymous,
     voteCount,
     myVoted,
+    convertedStory: note.convertedStory
+      ? { id: note.convertedStory.id, title: note.convertedStory.title }
+      : null,
   };
 
   if (currentUserId !== null && currentUserId !== undefined) {
@@ -226,6 +229,9 @@ router.get('/retros/:id', authMiddleware, async (req, res) => {
             votes: {
               select: { userId: true },
             },
+            convertedStory: {
+              select: { id: true, title: true },
+            },
           },
         },
       },
@@ -326,6 +332,9 @@ router.post('/retros/:id/notes', authMiddleware, async (req, res) => {
         votes: {
           select: { userId: true },
         },
+        convertedStory: {
+          select: { id: true, title: true },
+        },
       },
     });
 
@@ -396,6 +405,9 @@ router.patch('/retros/:id/notes/:noteId', authMiddleware, async (req, res) => {
         },
         votes: {
           select: { userId: true },
+        },
+        convertedStory: {
+          select: { id: true, title: true },
         },
       },
     });
@@ -611,6 +623,7 @@ router.post(
           include: {
             author: { select: { id: true, fullName: true, email: true, avatar: true } },
             votes: { select: { userId: true } },
+            convertedStory: { select: { id: true, title: true } },
           },
         });
 
@@ -645,6 +658,149 @@ router.post(
       }
       console.error('Lỗi vote note Retrospective:', err);
       return res.status(500).json({ error: 'Lỗi server khi vote ghi chú: ' + err.message });
+    }
+  }
+);
+
+/**
+ * POST /retros/:retroId/notes/:noteId/convert
+ * Chuyển Action Item đã có vote (>= 1) thành User Story trong Backlog của Sprint đích (SCRUM-77)
+ * Chỉ PO/SM của Project. Idempotent theo sourceRetroNoteId.
+ */
+router.post(
+  ['/retros/:retroId/notes/:noteId/convert', '/retros/:id/notes/:noteId/convert'],
+  authMiddleware,
+  async (req, res) => {
+    try {
+      const retroId = req.params.retroId || req.params.id;
+      const { noteId } = req.params;
+      const { sprintId } = req.body || {};
+      const userId = getUserId(req);
+
+      const session = await prisma.retroSession.findUnique({
+        where: { id: retroId },
+      });
+
+      if (!session) {
+        return res.status(404).json({ error: 'Không tìm thấy buổi Retrospective' });
+      }
+
+      const canConvert = await isProjectPOorSM(userId, session.projectId);
+      if (!canConvert) {
+        return res.status(403).json({ error: 'Chỉ Product Owner hoặc Scrum Master mới có quyền chuyển Action Item thành User Story' });
+      }
+
+      const note = await prisma.retroNote.findUnique({
+        where: { id: noteId },
+        include: {
+          _count: { select: { votes: true } },
+          convertedStory: true,
+        },
+      });
+
+      if (!note || note.sessionId !== retroId) {
+        return res.status(404).json({ error: 'Không tìm thấy ghi chú' });
+      }
+
+      if (note.column !== 'ACTION_ITEM') {
+        return res.status(400).json({ error: 'Chỉ có thể chuyển ghi chú thuộc cột Action Item' });
+      }
+
+      const voteCount = note._count?.votes || 0;
+      if (voteCount < 1) {
+        return res.status(400).json({ error: 'Action Item cần có ít nhất 1 lượt bình chọn mới có thể chuyển' });
+      }
+
+      if (!sprintId || typeof sprintId !== 'string') {
+        return res.status(400).json({ error: 'Vui lòng chọn Sprint đích' });
+      }
+
+      const sprint = await prisma.sprint.findUnique({
+        where: { id: sprintId },
+      });
+
+      if (!sprint || sprint.projectId !== session.projectId) {
+        return res.status(400).json({ error: 'Sprint không hợp lệ hoặc không thuộc dự án này' });
+      }
+
+      if (sprint.status === 'COMPLETED') {
+        return res.status(400).json({ error: 'Không thể chuyển vào Sprint đã hoàn thành (COMPLETED)' });
+      }
+
+      // Nếu note đã chuyển trước đó -> idempotent trả 200 kèm story cũ
+      if (note.convertedStory) {
+        return res.status(200).json({
+          alreadyConverted: true,
+          story: note.convertedStory,
+        });
+      }
+
+      const storyTitle = note.content.trim().slice(0, 255);
+      const storyDescription = `Từ buổi Retrospective: ${session.title}`;
+
+      let result;
+      try {
+        result = await prisma.$transaction(async (tx) => {
+          const existing = await tx.userStory.findUnique({
+            where: { sourceRetroNoteId: noteId },
+          });
+          if (existing) {
+            return { alreadyConverted: true, story: existing };
+          }
+
+          const created = await tx.userStory.create({
+            data: {
+              title: storyTitle,
+              description: storyDescription,
+              projectId: session.projectId,
+              sprintId: sprint.id,
+              priority: 'MEDIUM',
+              status: 'BACKLOG',
+              sourceRetroNoteId: noteId,
+            },
+          });
+
+          return { alreadyConverted: false, story: created };
+        });
+      } catch (txErr) {
+        if (txErr.code === 'P2002') {
+          const existing = await prisma.userStory.findUnique({
+            where: { sourceRetroNoteId: noteId },
+          });
+          if (existing) {
+            return res.status(200).json({
+              alreadyConverted: true,
+              story: existing,
+            });
+          }
+        }
+        throw txErr;
+      }
+
+      if (!result.alreadyConverted) {
+        const io = getIO();
+        if (io) {
+          io.to(`project_${session.projectId}`).to(session.projectId).emit('RETRO_NOTE_CONVERTED', {
+            noteId,
+            story: {
+              id: result.story.id,
+              title: result.story.title,
+            },
+          });
+        }
+        return res.status(201).json({
+          alreadyConverted: false,
+          story: result.story,
+        });
+      }
+
+      return res.status(200).json({
+        alreadyConverted: true,
+        story: result.story,
+      });
+    } catch (err) {
+      console.error('Lỗi chuyển Action Item thành User Story:', err);
+      return res.status(500).json({ error: 'Lỗi server khi chuyển Action Item: ' + err.message });
     }
   }
 );

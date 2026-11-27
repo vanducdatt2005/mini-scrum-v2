@@ -181,6 +181,21 @@ export default function StandupHistory({ standups, members }) {
                                                     </div>
                                                 </div>
                                             </div>
+
+                                            {/* Câu hỏi phụ vui nhộn (Fun Icebreaker Prompt) */}
+                                            {log.funPromptAnswer && (
+                                                <div className="mt-4 p-3 rounded-2xl bg-violet-500/8 border border-dashed border-violet-400/35 flex items-start gap-2 text-xs">
+                                                    <span className="text-sm shrink-0">✨</span>
+                                                    <div>
+                                                        <span className="font-bold text-violet-700 dark:text-violet-300">
+                                                            {log.funPromptQuestion || 'Góc vui vẻ'}:{' '}
+                                                        </span>
+                                                        <span className="italic text-on-surface/90 font-medium">
+                                                            “{log.funPromptAnswer}”
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 ))}

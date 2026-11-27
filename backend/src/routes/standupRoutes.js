@@ -45,6 +45,34 @@ function parseDateParam(dateParam) {
 }
 
 /**
+ * Chuẩn hóa câu hỏi phụ vui nhộn (Optional Validation - AC2)
+ * - Nếu người dùng nhập câu trả lời (trim khác rỗng) -> Lưu cả funPromptQuestion & funPromptAnswer
+ * - Nếu bỏ trống hoặc chỉ chứa khoảng trắng -> Reset cả 2 về null để tránh lưu rác
+ */
+function normalizeFunPrompt(body, fallback = { funPromptQuestion: null, funPromptAnswer: null }) {
+  const hasAnswerField = body.funPromptAnswer !== undefined || body.fun_prompt_answer !== undefined;
+  const hasQuestionField = body.funPromptQuestion !== undefined || body.fun_prompt_question !== undefined;
+
+  if (!hasAnswerField && !hasQuestionField) {
+    return fallback;
+  }
+
+  const rawAnswer = body.funPromptAnswer !== undefined ? body.funPromptAnswer : body.fun_prompt_answer;
+  const rawQuestion = body.funPromptQuestion !== undefined ? body.funPromptQuestion : body.fun_prompt_question;
+  const trimmedAnswer = (rawAnswer ?? '').toString().trim();
+
+  if (!trimmedAnswer) {
+    return { funPromptQuestion: null, funPromptAnswer: null };
+  }
+
+  const trimmedQuestion = (rawQuestion ?? fallback.funPromptQuestion ?? '').toString().trim();
+  return {
+    funPromptQuestion: trimmedQuestion || null,
+    funPromptAnswer: trimmedAnswer
+  };
+}
+
+/**
  * Kiểm tra quyền thành viên trong project chứa sprint
  */
 async function checkSprintMembership(userId, sprintId) {
@@ -123,6 +151,9 @@ async function postDailyStandupHandler(req, res) {
   const rawMood = (req.body.mood ?? 'NORMAL').toString().toUpperCase().trim();
   const mood = VALID_MOODS.includes(rawMood) ? rawMood : 'NORMAL';
 
+  // Câu hỏi phụ vui nhộn (Fun Icebreaker Prompt - Optional, AC2)
+  const { funPromptQuestion, funPromptAnswer } = normalizeFunPrompt(req.body);
+
   // Xử lý cờ blocked & lý do ngắn blockerNote (AC1, AC2)
   const rawBlocked = req.body.blocked;
   const isBlocked = rawBlocked === true || rawBlocked === 'true' || rawBlocked === 1 || rawBlocked === '1';
@@ -199,6 +230,8 @@ async function postDailyStandupHandler(req, res) {
         todayPlan,
         blockers,
         mood,
+        funPromptQuestion,
+        funPromptAnswer,
         blocked: isBlocked,
         blockerNote: cleanedBlockerNote,
         blockerStatus: isBlocked ? 'OPEN' : null,
@@ -433,6 +466,12 @@ async function updateDailyStandupHandler(req, res) {
     }
   }
 
+  // Câu hỏi phụ vui nhộn (Optional, AC2)
+  const { funPromptQuestion, funPromptAnswer } = normalizeFunPrompt(req.body, {
+    funPromptQuestion: standup.funPromptQuestion || null,
+    funPromptAnswer: standup.funPromptAnswer || null
+  });
+
   // Xử lý cờ blocked & lý do ngắn blockerNote (AC1, AC2, Rule 3)
   const isBlocked = req.body.blocked !== undefined 
     ? (req.body.blocked === true || req.body.blocked === 'true' || req.body.blocked === 1 || req.body.blocked === '1')
@@ -489,6 +528,8 @@ async function updateDailyStandupHandler(req, res) {
         todayPlan,
         blockers,
         mood,
+        funPromptQuestion,
+        funPromptAnswer,
         blocked: isBlocked,
         blockerNote: cleanedBlockerNote,
         blockerStatus: isBlocked ? (standup.blockerStatus || 'OPEN') : null,
@@ -785,6 +826,8 @@ async function getDailyDigestHandler(req, res) {
         email: item.user?.email || ''
       },
       mood: item.mood || 'NORMAL',
+      funPromptQuestion: item.funPromptQuestion || null,
+      funPromptAnswer: item.funPromptAnswer || null,
       yesterdayWork: item.yesterdayWork || item.yesterday || '',
       todayPlan: item.todayPlan || item.today || '',
       blockers: item.blockers || '',
